@@ -60,7 +60,8 @@ final class PanelController {
         }
     }
 
-    func toggle() { panel.isVisible ? hide() : show() }
+    // Uses state, not panel.isVisible: during the slide-out the window is still on screen.
+    func toggle() { state.isVisible ? hide(animated: true) : show() }
 
     func show() {
         let mouse = NSEvent.mouseLocation
@@ -83,8 +84,9 @@ final class PanelController {
             state.board = nil
         }
         state.shownAt = Date()
-        state.isVisible = true
         panel.makeKeyAndOrderFront(nil)
+        // Content is inserted under an animation, so PanelView's transition slides it up from the screen edge.
+        withAnimation(.spring(duration: 0.35, bounce: 0.12)) { state.isVisible = true }
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self else { return e }
@@ -92,12 +94,23 @@ final class PanelController {
         }
     }
 
-    func hide() {
+    /// `animated` slides the panel down (Esc, hotkey). Pasting and clicking away hide instantly,
+    /// so the target app gets keyboard focus back before the synthetic ⌘V.
+    func hide(animated: Bool = false) {
         guard panel.isVisible else { return }
-        panel.orderOut(nil)
-        state.isVisible = false
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        guard animated else {
+            panel.orderOut(nil)
+            state.isVisible = false
+            return
+        }
+        withAnimation(.easeIn(duration: 0.2)) {
+            state.isVisible = false
+        } completion: { [weak self] in
+            guard let self, !state.isVisible else { return }  // reopened mid-animation: keep the window
+            panel.orderOut(nil)
+        }
     }
 
     /// Arrow keys, Enter and Esc are taken here before the search field sees them; other keys go to search.
@@ -123,7 +136,7 @@ final class PanelController {
         case 123: state.selection = max(state.selection - 1, 0)
         case 124: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
         case 36, 76: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
-        case 53: hide()
+        case 53: hide(animated: true)
         // Plain ⌫ deletes the card only with an empty query; otherwise it edits the search text.
         case 51 where cmd || state.query.isEmpty:
             if clips.indices.contains(state.selection) { delete(clips[state.selection]) }

@@ -12,6 +12,7 @@ struct PanelView: View {
     @State private var boardName = ""
     @State private var dropTarget: UUID?
     @Namespace private var glass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Field { case search, boardName }
     static let boardColors: [(name: String, color: Color)] = [
@@ -42,11 +43,17 @@ struct PanelView: View {
     static let shadowRoom = EdgeInsets(top: 24, leading: 8, bottom: 8, trailing: 8)
 
     var body: some View {
-        if state.isVisible {
-            panelContent
-                .padding(Self.shadowRoom)
-                .onAppear { DispatchQueue.main.async { focus = .search } }
+        ZStack {  // stable container, so inserting the content runs its transition
+            if state.isVisible {
+                panelContent
+                    .padding(Self.shadowRoom)
+                    .transition(
+                        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+                    )
+                    .onAppear { DispatchQueue.main.async { focus = .search } }
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var panelContent: some View {
