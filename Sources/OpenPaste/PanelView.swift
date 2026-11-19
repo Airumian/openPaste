@@ -560,12 +560,12 @@ struct CardView: View {
                     .focused($titleFocused)
                     .onSubmit(onCommitTitle)
                     .onAppear { titleFocused = true }
-                    .padding(.trailing, 72)  // keep clear of the app icon in the corner
+                    .padding(.trailing, 56)  // keep clear of the app icon in the corner
             } else {
                 Text(clip.title ?? Self.defaultTitle(clip))
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                    .padding(.trailing, 72)
+                    .padding(.trailing, 56)
             }
             Text(Self.relative.localizedString(for: clip.date, relativeTo: now))
                 .font(.system(size: 11.5))
@@ -573,13 +573,13 @@ struct CardView: View {
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: 65, maxHeight: 65, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 50, maxHeight: 50, alignment: .leading)
         .background(app.color)
         .overlay(alignment: .topTrailing) {
             if let icon = app.icon {
                 Image(nsImage: icon).resizable()
-                    .frame(width: 78, height: 78)
-                    .offset(x: 9, y: -5)
+                    .frame(width: 60, height: 60)
+                    .offset(x: 7, y: -4)
             }
         }
         .clipped()
@@ -614,14 +614,18 @@ struct CardView: View {
     }
 
     private var footerBar: some View {
-        HStack(spacing: 6) {
-            Text(footer)
-                .lineLimit(clip.kind == .file ? 2 : 1).truncationMode(.middle)
-                .frame(
-                    maxWidth: .infinity,
-                    alignment: [.link, .file].contains(clip.kind) ? .leading : .center)
+        let centered = ![.link, .file].contains(clip.kind)
+        let badge = HStack(spacing: 6) {
             Image(systemName: "text.alignleft").font(.system(size: 10))
             Text("\(index)")
+        }
+        return HStack(spacing: 6) {
+            // Invisible twin of the badge, so centered text is centered on the card, not beside the badge.
+            if centered { badge.hidden() }
+            Text(footer)
+                .lineLimit(clip.kind == .file ? 2 : 1).truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+            badge
         }
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
