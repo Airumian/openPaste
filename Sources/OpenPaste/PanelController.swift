@@ -8,6 +8,7 @@ final class PanelState {
     var shownAt = Date()
     var isVisible = false
     var board: UUID?  // nil = clipboard history tab
+    var renamingClip: UUID?  // card whose title is being edited inline
     var boardEditor: BoardEditor?  // inline name field for a new or renamed pinboard
     var dragging: Clip?  // card being dragged onto a pinboard tab
 
@@ -44,7 +45,7 @@ final class PanelController {
         panel.level = .popUpMenu
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false  // the glass draws its own rim and shadow; the window shadow added a second, mismatched border
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let host = NSHostingView(
@@ -64,26 +65,34 @@ final class PanelController {
         }
     }
 
-    func toggle() { panel.isVisible ? hide() : show() }
+    // Uses state, not panel.isVisible: during the slide-out the window is still on screen.
+    func toggle() { state.isVisible ? hide(animated: true) : show() }
 
     func show() {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
         let f = screen.frame
+        // The window spans the screen bottom; PanelView insets the glass inside it so the glass shadow
+        // has transparent room instead of being cut off at the window's square corners.
         panel.setFrame(
-            NSRect(x: f.minX + 8, y: f.minY + 8, width: f.width - 16, height: 320), display: true)
+            NSRect(
+                x: f.minX, y: f.minY, width: f.width,
+                height: 320 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
+            display: true)
 
         store.pruneExpired()
         state.query = ""
         state.selection = 0
         state.boardEditor = nil
+        state.renamingClip = nil
         state.dragging = nil
         if let b = state.board, !store.pinboards.contains(where: { $0.id == b }) {
             state.board = nil
         }
         state.shownAt = Date()
-        state.isVisible = true
         panel.makeKeyAndOrderFront(nil)
+        // Content is inserted under an animation, so PanelView's transition slides it up from the screen edge.
+        withAnimation(.spring(duration: 0.35, bounce: 0.12)) { state.isVisible = true }
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, e.window === panel else { return e }
@@ -91,19 +100,31 @@ final class PanelController {
         }
     }
 
-    func hide() {
+    /// `animated` slides the panel down (Esc, hotkey). Pasting and clicking away hide instantly,
+    /// so the target app gets keyboard focus back before the synthetic ⌘V.
+    func hide(animated: Bool = false) {
         guard panel.isVisible else { return }
-        panel.orderOut(nil)
-        state.isVisible = false
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        guard animated else {
+            panel.orderOut(nil)
+            state.isVisible = false
+            return
+        }
+        withAnimation(.easeIn(duration: 0.2)) {
+            state.isVisible = false
+        } completion: { [weak self] in
+            guard let self, !state.isVisible else { return }  // reopened mid-animation: keep the window
+            panel.orderOut(nil)
+        }
     }
 
     /// Assigned panel commands are handled before the search field; other keys go to search.
     private func handle(_ e: NSEvent) -> Bool {
-        if state.boardEditor != nil {  // the pinboard name field owns the keyboard
+        if state.boardEditor != nil || state.renamingClip != nil {  // a name field owns the keyboard
             if e.keyCode == 53 {
                 state.boardEditor = nil
+                state.renamingClip = nil
                 return true
             }
             return false
@@ -122,7 +143,9 @@ final class PanelController {
         case .previousClip: state.selection = max(state.selection - 1, 0)
         case .nextClip: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
         case .paste: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
-        case .close: hide()
+        case .close: hide(animated: true)
+        case .delete where !state.query.isEmpty:  // Clear the search before deleting cards, like a text field.
+            state.query = ""
         case .delete, .deleteWithoutSearch:
             if clips.indices.contains(state.selection) { delete(clips[state.selection]) }
         case .undoDelete:
@@ -143,6 +166,12 @@ final class PanelController {
     private func paste(_ clip: Clip) {
         store.copy(clip)
         hide()
+        // Without Accessibility the synthetic ⌘V is silently dropped; ask instead of failing invisibly.
+        // The clip is already on the clipboard, so a manual ⌘V still works meanwhile.
+        guard AXIsProcessTrusted() else {
+            Paster.requestAccess()
+            return
+        }
         // Give the target app a moment to become key again before the synthetic ⌘V.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { Paster.sendCmdV() }
     }

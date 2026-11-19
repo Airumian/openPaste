@@ -2,3 +2,9 @@
 OpenPaste.app/
 .DS_Store
 OpenPaste.dmg
+OpenPaste-*.dmg
+# Signing material must never be committed
+*.cer
+*.p12
+*.p8
+*.certSigningRequest

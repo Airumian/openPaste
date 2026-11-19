@@ -16,6 +16,7 @@ struct Clip: Codable, Identifiable, Equatable {
     var appBundleID: String?
     var date = Date()
     var pinboardID: UUID?  // nil = clipboard history
+    var title: String?  // user-given name; nil shows the default ("Текст", "Ссылка", …)
 }
 
 extension Clip {
@@ -187,6 +188,7 @@ final class ClipStore {
                 $0.textFile == nil && $0.text == text && $0.pinboardID == clip.pinboardID
             })
         {
+            clip.title = clip.title ?? clips[i].title  // a re-copied clip keeps the name the user gave it
             clips.remove(at: i)
         }
         if let hash = clip.imageHash,
@@ -194,6 +196,7 @@ final class ClipStore {
                 $0.imageHash == hash && $0.pinboardID == clip.pinboardID
             })
         {
+            clip.title = clip.title ?? clips[i].title
             removeFile(of: clips.remove(at: i))
         }
         clips.insert(clip, at: 0)
@@ -355,11 +358,20 @@ final class ClipStore {
             ?? clip.text
     }
 
+    /// Sets a custom card title; empty or whitespace resets it to the default.
+    func rename(_ clip: Clip, to title: String) {
+        guard let i = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        clips[i].title = trimmed.isEmpty ? nil : trimmed
+        save()
+    }
+
     func filtered(_ query: String, board: UUID? = nil) -> [Clip] {
         let q = query.trimmingCharacters(in: .whitespaces)
         return clips.filter {
             $0.pinboardID == board
-                && (q.isEmpty || $0.text?.localizedCaseInsensitiveContains(q) == true)
+                && (q.isEmpty || $0.text?.localizedCaseInsensitiveContains(q) == true
+                    || $0.title?.localizedCaseInsensitiveContains(q) == true)
         }
     }
 
