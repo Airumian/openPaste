@@ -158,7 +158,10 @@ final class ClipStoreTests: XCTestCase {
         s.add(Clip(kind: .text, text: "old", date: now.addingTimeInterval(-40 * 86_400)))
         s.add(Clip(kind: .text, text: "recent", date: now.addingTimeInterval(-2 * 86_400)))
         let board = s.addPinboard(name: "B")
-        s.add(Clip(kind: .text, text: "old pin", date: now.addingTimeInterval(-400 * 86_400), pinboardID: board.id))
+        s.add(
+            Clip(
+                kind: .text, text: "old pin", date: now.addingTimeInterval(-400 * 86_400),
+                pinboardID: board.id))
 
         s.prune(olderThanDays: nil, now: now)
         XCTAssertEqual(s.clips.count, 3, "forever keeps everything")
@@ -166,6 +169,21 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertEqual(s.clips.map(\.text), ["old pin", "recent"])
         s.prune(olderThanDays: 1, now: now)
         XCTAssertEqual(s.clips.map(\.text), ["old pin"])
+    }
+
+    func testRenameKeepsTitleAndIsSearchable() {
+        let s = makeStore()
+        s.add(Clip(kind: .text, text: "ssh deploy@192.0.2.10"))
+        s.rename(s.clips[0], to: "  Прод-сервер ")
+        XCTAssertEqual(s.clips[0].title, "Прод-сервер")
+        XCTAssertEqual(s.filtered("прод").count, 1, "search matches the custom title")
+
+        s.add(Clip(kind: .text, text: "ssh deploy@192.0.2.10"))  // copied again
+        XCTAssertEqual(s.clips.count, 1)
+        XCTAssertEqual(s.clips[0].title, "Прод-сервер", "re-copy keeps the name")
+
+        s.rename(s.clips[0], to: "   ")
+        XCTAssertNil(s.clips[0].title, "blank resets to the default title")
     }
 
     func testIsLink() {

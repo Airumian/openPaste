@@ -8,6 +8,7 @@ final class PanelState {
     var shownAt = Date()
     var isVisible = false
     var board: UUID?  // nil = clipboard history tab
+    var renamingClip: UUID?  // card whose title is being edited inline
     var boardEditor: BoardEditor?  // inline name field for a new or renamed pinboard
     var dragging: Clip?  // card being dragged onto a pinboard tab
 
@@ -79,6 +80,7 @@ final class PanelController {
         state.query = ""
         state.selection = 0
         state.boardEditor = nil
+        state.renamingClip = nil
         state.dragging = nil
         if let b = state.board, !store.pinboards.contains(where: { $0.id == b }) {
             state.board = nil
@@ -115,9 +117,10 @@ final class PanelController {
 
     /// Arrow keys, Enter and Esc are taken here before the search field sees them; other keys go to search.
     private func handle(_ e: NSEvent) -> Bool {
-        if state.boardEditor != nil {  // the pinboard name field owns the keyboard
+        if state.boardEditor != nil || state.renamingClip != nil {  // a name field owns the keyboard
             if e.keyCode == 53 {
                 state.boardEditor = nil
+                state.renamingClip = nil
                 return true
             }
             return false
@@ -138,6 +141,8 @@ final class PanelController {
         case 36, 76: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
         case 53: hide(animated: true)
         // Plain ⌫ deletes the card only with an empty query; otherwise it edits the search text.
+        case 51 where cmd && !state.query.isEmpty:  // ⌘⌫ in a non-empty search clears it, like any text field
+            state.query = ""
         case 51 where cmd || state.query.isEmpty:
             if clips.indices.contains(state.selection) { delete(clips[state.selection]) }
         case 6 where cmd:  // ⌘Z

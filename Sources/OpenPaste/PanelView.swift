@@ -11,6 +11,7 @@ struct PanelView: View {
     @FocusState private var focus: Field?
     @State private var boardName = ""
     @State private var dropTarget: UUID?
+    @State private var clipTitleDraft = ""
     @Namespace private var glass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -146,7 +147,12 @@ struct PanelView: View {
         CardView(
             clip: clip, index: i + 1, selected: i == state.selection,
             now: state.shownAt,
-            thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil
+            thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil,
+            titleDraft: state.renamingClip == clip.id ? $clipTitleDraft : nil,
+            onCommitTitle: {
+                store.rename(clip, to: clipTitleDraft)
+                state.renamingClip = nil
+            }
         )
         .id(clip.id)
         // Single click selects at once; a sequential double-tap gesture would delay it by the double-click interval.
@@ -166,6 +172,11 @@ struct PanelView: View {
         }
         .contextMenu {
             Button("Вставить") { onPaste(clip) }
+            Button("Переименовать") {
+                clipTitleDraft = clip.title ?? CardView.defaultTitle(clip)
+                state.selection = i
+                state.renamingClip = clip.id
+            }
             if !store.pinboards.isEmpty {
                 Menu("Закрепить в") {
                     ForEach(Array(store.pinboards.enumerated()), id: \.element.id) { n, board in
@@ -299,6 +310,10 @@ struct CardView: View {
     let selected: Bool
     let now: Date
     let thumbnail: NSImage?
+    /// Non-nil while this card's title is being edited inline.
+    var titleDraft: Binding<String>? = nil
+    var onCommitTitle: () -> Void = {}
+    @FocusState private var titleFocused: Bool
 
     private static let radius: CGFloat = 18
     private static let relative: RelativeDateTimeFormatter = {
@@ -328,7 +343,20 @@ struct CardView: View {
     /// App-colored strip; the icon is oversized and pushed into the corner so the card's rounding crops it.
     private func header(_ app: (icon: NSImage?, color: Color)) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.system(size: 15, weight: .semibold))
+            if let draft = titleDraft {
+                TextField("Название", text: draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .semibold))
+                    .focused($titleFocused)
+                    .onSubmit(onCommitTitle)
+                    .onAppear { titleFocused = true }
+                    .padding(.trailing, 56)  // keep clear of the app icon in the corner
+            } else {
+                Text(clip.title ?? Self.defaultTitle(clip))
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+                    .padding(.trailing, 56)
+            }
             Text(Self.relative.localizedString(for: clip.date, relativeTo: now))
                 .font(.system(size: 11.5))
                 .opacity(0.85)
@@ -390,7 +418,7 @@ struct CardView: View {
         .padding(.horizontal, 12).padding(.bottom, 9)
     }
 
-    private var title: String {
+    static func defaultTitle(_ clip: Clip) -> String {
         switch clip.kind {
         case .text: "Текст"
         case .link: "Ссылка"
