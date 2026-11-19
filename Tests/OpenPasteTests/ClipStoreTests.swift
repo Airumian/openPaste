@@ -22,6 +22,33 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: s.textsDir.path), [])
     }
 
+    func testEditingKeepsCardIdentityAndPersistsFullText() throws {
+        let store = makeStore()
+        let board = store.addPinboard(name: "Pinned")
+        var card = Clip(kind: .link, text: "https://example.org")
+        card.pinboardID = board.id
+        card.title = "Custom name"
+        store.add(card)
+
+        let text = String(repeating: "edited content\n", count: 5_000)
+        let formatting = Data("{\\rtf1 \\b edited}".utf8)
+        try store.editContents(of: card.id, text: text, richText: formatting)
+        let reopened = reload(store)
+        let edited = try XCTUnwrap(reopened.clips.first)
+        XCTAssertEqual(edited.id, card.id)
+        XCTAssertEqual(edited.pinboardID, board.id)
+        XCTAssertEqual(edited.title, card.title)
+        XCTAssertEqual(edited.kind, .text)
+        XCTAssertEqual(edited.richText, formatting)
+        XCTAssertEqual(try reopened.textForEditing(edited), text)
+
+        try reopened.editContents(of: edited.id, text: "https://example.com", richText: nil)
+        let saved = try XCTUnwrap(reload(reopened).clips.first)
+        XCTAssertEqual(saved.kind, .link)
+        XCTAssertNil(saved.richText)
+        XCTAssertEqual(try reopened.textForEditing(saved), "https://example.com")
+    }
+
     func testDuplicateImagesByHash() throws {
         let s = makeStore()
         var first = Clip(kind: .image)

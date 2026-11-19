@@ -9,6 +9,7 @@ struct Clip: Codable, Identifiable, Equatable {
     var id = UUID()
     var kind: Kind
     var text: String?  // text or URL string
+    var richText: Data?
     var imageFile: String?  // file name inside the images folder
     var imageHash: String?  // SHA-256 of the copied bytes, to drop duplicate screenshots
     var textFile: String?  // big texts live in texts/<file>; `text` then holds only a preview
@@ -20,6 +21,7 @@ struct Clip: Codable, Identifiable, Equatable {
 }
 
 extension Clip {
+    var canEditContents: Bool { kind == .text || kind == .link }
     /// Copied Finder files; their paths are stored newline-separated in `text` so search finds them.
     var files: [URL] {
         kind == .file
@@ -185,7 +187,8 @@ final class ClipStore {
         // Duplicates move to the front of their board. Big texts compare only previews, so they never dedupe.
         if clip.textFile == nil, let text = clip.text,
             let i = clips.firstIndex(where: {
-                $0.textFile == nil && $0.text == text && $0.pinboardID == clip.pinboardID
+                $0.textFile == nil && $0.text == text && $0.richText == clip.richText
+                    && $0.pinboardID == clip.pinboardID
             })
         {
             clip.title = clip.title ?? clips[i].title  // a re-copied clip keeps the name the user gave it
@@ -338,6 +341,7 @@ final class ClipStore {
             pb.writeObjects(clip.files as [NSURL])
         } else if let text = fullText(clip) {
             pb.setString(text, forType: .string)
+            if let richText = clip.richText { pb.setData(richText, forType: .rtf) }
         } else if let url = imageURL(clip), let image = NSImage(contentsOf: url) {
             pb.writeObjects([image])
         }
@@ -358,6 +362,32 @@ final class ClipStore {
             try? String(contentsOf: textsDir.appendingPathComponent($0), encoding: .utf8)
         }
             ?? clip.text
+    }
+
+    func textForEditing(_ clip: Clip) throws -> String {
+        guard let file = clip.textFile else { return clip.text ?? "" }
+        return try String(contentsOf: textsDir.appendingPathComponent(file), encoding: .utf8)
+    }
+
+    func editContents(of id: UUID, text: String, richText: Data?) throws {
+        guard let index = clips.firstIndex(where: { $0.id == id && $0.canEditContents }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        var clip = clips[index]
+        clip.kind = Self.isLink(text) ? .link : .text
+        clip.richText = richText
+        if clip.textFile != nil || text.utf8.count > Self.bigTextBytes {
+            let file = clip.textFile ?? "\(clip.id).txt"
+            try text.write(
+                to: textsDir.appendingPathComponent(file), atomically: true, encoding: .utf8)
+            clip.textFile = file
+            clip.textLength = text.count
+            clip.text = String(text.prefix(Self.previewChars))
+        } else {
+            clip.text = text
+        }
+        clips[index] = clip
+        save()
     }
 
     /// Sets a custom card title; empty or whitespace resets it to the default.

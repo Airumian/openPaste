@@ -1,6 +1,6 @@
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case togglePanel, nextBoard, previousBoard, previousClip, nextClip, paste, close
-    case delete, deleteWithoutSearch, undoDelete, search
+    case delete, deleteWithoutSearch, undoDelete, search, edit
     case extendPrevious, extendNext, selectAll, tabToCards
 
     var id: Self { self }
@@ -18,6 +18,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .deleteWithoutSearch: "Удалить карточку без поиска"
         case .undoDelete: "Вернуть удалённую карточку"
         case .search: "Поиск"
+        case .edit: "Редактировать содержимое"
         case .extendPrevious: "Добавить предыдущую карточку"
         case .extendNext: "Добавить следующую карточку"
         case .selectAll: "Выделить все карточки"
@@ -38,6 +39,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .deleteWithoutSearch: AppShortcut(keyCode: 51, keyLabel: "⌫")
         case .undoDelete: AppShortcut(keyCode: 6, flags: .command, keyLabel: "Z")
         case .search: AppShortcut(keyCode: 3, flags: .command, keyLabel: "F")
+        case .edit: AppShortcut(keyCode: 14, flags: .command, keyLabel: "E")
         case .extendPrevious: AppShortcut(keyCode: 123, flags: .shift, keyLabel: "←")
         case .extendNext: AppShortcut(keyCode: 124, flags: .shift, keyLabel: "→")
         case .selectAll: AppShortcut(keyCode: 0, flags: .command, keyLabel: "A")

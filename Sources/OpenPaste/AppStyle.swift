@@ -53,8 +53,8 @@ enum AppStyle {
         guard total > Double(size * size) * 0.03 else { return nil }
         let avg = NSColor(red: r / total, green: g / total, blue: b / total, alpha: 1)
         return NSColor(
-            hue: avg.hueComponent, saturation: avg.saturationComponent,
-            brightness: min(avg.brightnessComponent, 0.75), alpha: 1)
+            hue: avg.hueComponent, saturation: min(avg.saturationComponent * 1.1, 1),
+            brightness: min(avg.brightnessComponent, 0.78), alpha: 1)
     }
 }
 

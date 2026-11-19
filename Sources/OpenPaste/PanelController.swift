@@ -51,6 +51,7 @@ final class PanelController {
     private let panel: PastePanel
     private var monitor: Any?
     private var hideAnimationID: UUID?
+    private var clipEditor: ClipEditorWindow?
     var onSettings: () -> Void = {}
 
     init(store: ClipStore, shortcuts: ShortcutStore) {
@@ -73,6 +74,7 @@ final class PanelController {
                 store: store, shortcuts: shortcuts, state: state,
                 onPaste: { [unowned self] in paste($0) },
                 onDelete: { [unowned self] in delete($0) },
+                onEdit: { [unowned self] in edit($0) },
                 onSwitchBoard: { [unowned self] in switchBoard(to: $0) },
                 onPin: { [unowned self] in pin($0, to: $1) },
                 onSettings: { [unowned self] in onSettings() }))
@@ -93,6 +95,10 @@ final class PanelController {
     func toggle() { state.isVisible ? hide(animated: true) : show() }
 
     func show() {
+        if let clipEditor {
+            clipEditor.makeKeyAndOrderFront(nil)
+            return
+        }
         if state.isVisible {
             panel.makeKeyAndOrderFront(nil)
             return
@@ -188,6 +194,8 @@ final class PanelController {
             state.selection = 0
             state.anchor = max(clips.count - 1, 0)
         case .paste: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
+        case .edit:
+            if clips.indices.contains(state.selection) { edit(clips[state.selection]) }
         case .close where !state.query.isEmpty || state.searchExpanded:
             // First Esc leaves search (clears and collapses it); the next one closes the panel.
             state.query = ""
@@ -213,6 +221,41 @@ final class PanelController {
     private func pin(_ clip: Clip, to board: Pinboard) {
         guard clip.pinboardID != board.id else { return }
         store.pin(clip, to: board)
+    }
+
+    private func edit(_ clip: Clip) {
+        guard clip.canEditContents else { return }
+        if let clipEditor {
+            clipEditor.makeKeyAndOrderFront(nil)
+            return
+        }
+        do {
+            let editor = ClipEditorWindow(
+                text: try store.textForEditing(clip), richText: clip.richText,
+                onSave: { [store] text, richText in
+                    try store.editContents(of: clip.id, text: text, richText: richText)
+                },
+                onClose: { [weak self] in
+                    guard let self else { return }
+                    self.clipEditor = nil
+                    self.show()
+                    if let index = self.state.visibleClips(self.store).firstIndex(where: {
+                        $0.id == clip.id
+                    }) {
+                        self.state.selection = index
+                    }
+                }
+            )
+            clipEditor = editor
+            hide()
+            NSApp.activate()
+            editor.center()
+            editor.makeKeyAndOrderFront(nil)
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.messageText = "Не удалось открыть содержимое карточки"
+            alert.beginSheetModal(for: panel)
+        }
     }
 
     private func paste(_ clip: Clip) {

@@ -45,7 +45,7 @@ struct KeyboardShortcutsView: View {
             ShortcutGroupView(
                 actions: [
                     .previousClip, .nextClip, .extendPrevious, .extendNext, .selectAll, .paste,
-                    .search, .tabToCards, .close,
+                    .edit, .search, .tabToCards, .close,
                 ], shortcuts: shortcuts,
                 recorder: recorder)
             ShortcutGroupView(

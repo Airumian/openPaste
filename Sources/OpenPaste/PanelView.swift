@@ -8,6 +8,7 @@ struct PanelView: View {
     @Bindable var state: PanelState
     let onPaste: (Clip) -> Void
     let onDelete: (Clip) -> Void
+    let onEdit: (Clip) -> Void
     let onSwitchBoard: (UUID?) -> Void
     let onPin: (Clip, Pinboard) -> Void
     let onSettings: () -> Void
@@ -186,6 +187,9 @@ struct PanelView: View {
         }
         .contextMenu {
             Button("Вставить") { onPaste(clip) }
+            if clip.canEditContents {
+                Button("Редактировать") { onEdit(clip) }
+            }
             Button("Переименовать") {
                 clipTitleDraft = clip.title ?? CardView.defaultTitle(clip)
                 state.selection = i
@@ -635,8 +639,8 @@ struct CardView: View {
         .overlay(alignment: .topTrailing) {
             if let icon = app.icon {
                 Image(nsImage: icon).resizable()
-                    .frame(width: 60, height: 60)
-                    .offset(x: 7, y: -4)
+                    .frame(width: 64, height: 64)
+                    .offset(x: 8, y: -5)
             }
         }
         .clipped()
@@ -662,11 +666,23 @@ struct CardView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .text:
-            Text(String((clip.text ?? "").prefix(600)))
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.92))
-                .lineLimit(8)
-                .padding(.horizontal, 12).padding(.top, 10)
+            GeometryReader { area in
+                Text(String((clip.text ?? "").prefix(600)))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12).padding(.top, 10)
+                    .frame(width: area.size.width, height: area.size.height, alignment: .topLeading)
+                    .mask(alignment: .bottom) {
+                        VStack(spacing: 0) {
+                            Rectangle()
+                            LinearGradient(
+                                colors: [.black, .clear], startPoint: .top, endPoint: .bottom
+                            )
+                            .frame(height: 22)
+                        }
+                    }
+            }
         }
     }
 
@@ -674,8 +690,10 @@ struct CardView: View {
         let centered = ![.link, .file].contains(clip.kind)
         let badge = HStack(spacing: 6) {
             Image(systemName: "text.alignleft").font(.system(size: 10))
-            Text("\(index)")
+            Text("\(index)").monospacedDigit()
         }
+        .padding(.horizontal, 5).padding(.vertical, 2)
+        .background(.white.opacity(0.08), in: .rect(cornerRadius: 5))
         return HStack(spacing: 6) {
             // Invisible twin of the badge, so centered text is centered on the card, not beside the badge.
             if centered { badge.hidden() }
@@ -685,7 +703,7 @@ struct CardView: View {
             badge
         }
         .font(.system(size: 12))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.white.opacity(0.72))
         .padding(.horizontal, 12).padding(.bottom, 9)
     }
 
