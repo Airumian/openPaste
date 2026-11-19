@@ -90,7 +90,7 @@ final class PanelController {
         panel.setFrame(
             NSRect(
                 x: f.minX, y: f.minY, width: f.width,
-                height: 335 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
+                height: 324 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
             display: true)
 
         store.pruneExpired()

@@ -52,7 +52,7 @@ struct PanelView: View {
     /// A hidden panel renders nothing, so copies made while it's closed don't rebuild the card list.
     /// Transparent margin around the glass inside the panel window: keeps the 8 pt gap to the screen edges
     /// and leaves room for the glass shadow, which would otherwise be clipped into gray corner wedges.
-    static let shadowRoom = EdgeInsets(top: 24, leading: 8, bottom: 8, trailing: 8)
+    static let shadowRoom = EdgeInsets(top: 0, leading: 8, bottom: 8, trailing: 8)  // window 332 pt, as in Paste
 
     var body: some View {
         ZStack {  // stable container, so inserting the content runs its transition
@@ -72,7 +72,7 @@ struct PanelView: View {
 
     private var panelContent: some View {
         let clips = state.visibleClips(store)
-        return VStack(spacing: 14) {
+        return VStack(spacing: 8) {
             HStack(spacing: 10) {
                 // Mirrors the "⋯" button so the header group stays centered.
                 Color.clear.frame(width: 34, height: 34)
@@ -134,7 +134,7 @@ struct PanelView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal) {
-                        LazyHStack(spacing: 25) {
+                        LazyHStack(spacing: 24) {
                             ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
                                 card(clip, index: i)
                             }
@@ -538,12 +538,14 @@ struct CardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             footerBar
         }
-        .frame(width: 240, height: 240)
+        .frame(width: 232, height: 232)
         .background(clip.kind == .link ? Color(white: 0.13) : Color(white: 0.08))
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+            // Ring sits outside the card, as in Paste: 240 pt outer edge around a 232 pt card.
+            RoundedRectangle(cornerRadius: Self.radius + 4, style: .continuous)
                 .strokeBorder(Color.accentColor, lineWidth: 4)
+                .padding(-4)
                 .opacity(selected ? 1 : 0)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
         )

@@ -50,7 +50,7 @@ final class ClipStore {
     @ObservationIgnored private var saveScheduled = false
     /// Disk writes and image encoding, off the main thread. Serial, so saves land in order.
     private static let io = DispatchQueue(label: "openpaste.io", qos: .utility)
-    static let thumbnailPixels = 480  // card is 240 pt wide, 2x on Retina
+    static let thumbnailPixels = 480  // card is 232 pt wide, 2x on Retina
     static let bigTextBytes = 50_000
     static let previewChars = 10_000
 
