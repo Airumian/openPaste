@@ -207,7 +207,18 @@ final class PanelController {
         case .delete where !state.query.isEmpty:  // Clear the search before deleting cards, like a text field.
             state.query = ""
         case .delete, .deleteWithoutSearch:
-            if clips.indices.contains(state.selection) { delete(clips[state.selection]) }
+            let range = state.selectedRange
+            guard state.deletionSelection == nil, clips.indices.contains(range.lowerBound),
+                clips.indices.contains(range.upperBound)
+            else { return true }
+            if range.lowerBound == range.upperBound {
+                delete(clips[range.lowerBound])
+            } else {
+                let replacement =
+                    range.upperBound + 1 < clips.count
+                    ? clips[range.upperBound + 1].id : clips.prefix(range.lowerBound).last?.id
+                remove(Array(clips[range]), selecting: replacement)
+            }
         case .undoDelete:
             if let restored = store.undoDelete() {
                 state.board = restored.pinboardID  // jump to the tab it came from
@@ -282,19 +293,19 @@ final class PanelController {
             state.deletionSelection = replacement
             // Render the replacement's outline at its old position before shifting the row.
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(20)) { [weak self] in
-                self?.remove(clip, selecting: replacement)
+                self?.remove([clip], selecting: replacement)
             }
             return
         }
-        remove(clip)
+        remove([clip])
     }
 
-    private func remove(_ clip: Clip, selecting replacement: UUID? = nil) {
+    private func remove(_ selection: [Clip], selecting replacement: UUID? = nil) {
         let animation: Animation? =
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             ? nil : .easeOut(duration: 0.23)
         withAnimation(animation) {
-            store.delete(clip)
+            store.delete(selection)
             let clips = state.visibleClips(store)
             state.selection =
                 replacement.flatMap { id in clips.firstIndex { $0.id == id } }

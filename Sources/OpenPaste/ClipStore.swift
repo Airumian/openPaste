@@ -212,29 +212,41 @@ final class ClipStore {
         save()
     }
 
-    /// Last deleted clip, kept with its image file so ⌘Z can bring it back.
-    // shortcut: one level of undo, lost on quit (its image file stays until the next delete); add a real stack if users ask.
-    private var trash: (clip: Clip, index: Int)?
+    /// Last deletion, with files retained for one level of undo during this session.
+    private var trash: [(clip: Clip, index: Int)] = []
 
     func delete(_ clip: Clip) {
-        guard let i = clips.firstIndex(where: { $0.id == clip.id }) else { return }
-        if let old = trash { removeFile(of: old.clip) }
-        trash = (clips.remove(at: i), i)
+        delete([clip])
+    }
+
+    func delete(_ selection: [Clip]) {
+        let ids = Set(selection.map(\.id))
+        let removed = clips.enumerated().compactMap { index, clip in
+            ids.contains(clip.id) ? (clip: clip, index: index) : nil
+        }
+        guard !removed.isEmpty else { return }
+        trash.forEach { removeFile(of: $0.clip) }
+        trash = removed
+        clips.removeAll { ids.contains($0.id) }
         save()
     }
 
-    /// Restores the last deleted clip at its old position; returns it, or nil if there is nothing to undo.
+    /// Restores the last deletion and returns the first restored clip for navigation.
     @discardableResult
     func undoDelete() -> Clip? {
-        guard let (deleted, index) = trash else { return nil }
-        var clip = deleted
-        trash = nil
-        if let b = clip.pinboardID, !pinboards.contains(where: { $0.id == b }) {
-            clip.pinboardID = nil  // its pinboard was deleted meanwhile: restore into history
+        guard !trash.isEmpty else { return nil }
+        var first: Clip?
+        for (deleted, index) in trash {
+            var clip = deleted
+            if let b = clip.pinboardID, !pinboards.contains(where: { $0.id == b }) {
+                clip.pinboardID = nil  // its pinboard was deleted meanwhile: restore into history
+            }
+            clips.insert(clip, at: min(index, clips.count))
+            if first == nil { first = clip }
         }
-        clips.insert(clip, at: min(index, clips.count))
+        trash.removeAll()
         save()
-        return clip
+        return first
     }
 
     /// Steps of the "keep history" slider in Settings; nil days = forever.
@@ -267,8 +279,8 @@ final class ClipStore {
     func clear() {
         clips.filter { $0.pinboardID == nil }.forEach(removeFile)
         clips.removeAll { $0.pinboardID == nil }
-        if let old = trash { removeFile(of: old.clip) }
-        trash = nil
+        trash.forEach { removeFile(of: $0.clip) }
+        trash.removeAll()
         save()
     }
 

@@ -64,6 +64,28 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: s.imageURL(first)!.path))
     }
 
+    func testDeleteSelectionRestoresAllCardsInOrder() throws {
+        let store = makeStore()
+        let board = store.addPinboard(name: "Pinned")
+        var pinned = Clip(kind: .text, text: "pinned")
+        pinned.pinboardID = board.id
+        store.add(Clip(kind: .text, text: "old"))
+        store.add(pinned)
+        let largeText = String(repeating: "clipboard line\n", count: 5_000)
+        store.add(Clip(kind: .text, text: largeText))
+        store.add(Clip(kind: .text, text: "new"))
+        let original = store.clips
+
+        store.delete(store.filtered(""))
+        XCTAssertEqual(reload(store).clips, [pinned])
+
+        XCTAssertEqual(store.undoDelete()?.id, original.first?.id)
+        XCTAssertEqual(reload(store).clips, original)
+        let restored = try XCTUnwrap(store.clips.first { $0.textFile != nil })
+        XCTAssertEqual(try store.textForEditing(restored), largeText)
+        XCTAssertNil(store.undoDelete())
+    }
+
     private func makeStore(limit: Int = 500) -> ClipStore {
         ClipStore(
             dir: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),

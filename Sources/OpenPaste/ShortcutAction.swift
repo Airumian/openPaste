@@ -16,7 +16,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .close: "Закрыть панель"
         case .delete: "Удалить карточку"
         case .deleteWithoutSearch: "Удалить карточку без поиска"
-        case .undoDelete: "Вернуть удалённую карточку"
+        case .undoDelete: "Отменить удаление карточек"
         case .search: "Поиск"
         case .edit: "Редактировать содержимое"
         case .extendPrevious: "Добавить предыдущую карточку"
