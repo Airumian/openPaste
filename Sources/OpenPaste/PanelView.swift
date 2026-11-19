@@ -10,6 +10,7 @@ struct PanelView: View {
     let onDelete: (Clip) -> Void
     let onSwitchBoard: (UUID?) -> Void
     let onPin: (Clip, Pinboard) -> Void
+    let onSettings: () -> Void
     @FocusState private var focus: Field?
     @State private var boardName = ""
     @State private var dropTarget: UUID?
@@ -72,46 +73,52 @@ struct PanelView: View {
     private var panelContent: some View {
         let clips = state.visibleClips(store)
         return VStack(spacing: 14) {
-            ZStack {
-                if searchMode {
-                    // Search mode, as in Paste: a wide field dead-center, tabs shrink to icons on its right.
-                    HStack(spacing: 0) {
-                        Color.clear.frame(maxWidth: .infinity)
-                        Color.clear.frame(width: Self.searchFieldWidth + 24)
-                        ScrollView(.horizontal) { compactTabs }
-                            .scrollIndicators(.hidden)
-                            .frame(maxWidth: .infinity)
-                    }
-                } else {
-                    // Fits: one centered group, nothing scrolls. Too many pinboards: search and "+" stay pinned
-                    // to the edges and only the tabs between them scroll.
-                    ViewThatFits(in: .horizontal) {
-                        headerRow(scrolling: false) { tabsRow }
-                        headerRow(scrolling: true) {
-                            ScrollViewReader { proxy in
-                                ScrollView(.horizontal) { tabsRow.padding(.horizontal, 4) }
-                                    .scrollIndicators(.hidden)
-                                    .onChange(of: state.board) { _, board in
-                                        withAnimation(reduceMotion ? nil : .default) {
-                                            proxy.scrollTo(
-                                                board?.uuidString ?? "history", anchor: .center)
-                                        }
-                                    }
-                                    .onChange(of: state.boardEditor) { _, editor in
-                                        if editor == .new {
+            HStack(spacing: 10) {
+                // Mirrors the "⋯" button so the header group stays centered.
+                Color.clear.frame(width: 34, height: 34)
+                ZStack {
+                    if searchMode {
+                        // Search mode, as in Paste: a wide field dead-center, tabs shrink to icons on its right.
+                        HStack(spacing: 0) {
+                            Color.clear.frame(maxWidth: .infinity)
+                            Color.clear.frame(width: Self.searchFieldWidth + 24)
+                            ScrollView(.horizontal) { compactTabs }
+                                .scrollIndicators(.hidden)
+                                .frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        // Fits: one centered group, nothing scrolls. Too many pinboards: search and "+" stay pinned
+                        // to the edges and only the tabs between them scroll.
+                        ViewThatFits(in: .horizontal) {
+                            headerRow(scrolling: false) { tabsRow }
+                            headerRow(scrolling: true) {
+                                ScrollViewReader { proxy in
+                                    ScrollView(.horizontal) { tabsRow.padding(.horizontal, 4) }
+                                        .scrollIndicators(.hidden)
+                                        .onChange(of: state.board) { _, board in
                                             withAnimation(reduceMotion ? nil : .default) {
-                                                proxy.scrollTo("new", anchor: .trailing)
+                                                proxy.scrollTo(
+                                                    board?.uuidString ?? "history", anchor: .center)
                                             }
                                         }
-                                    }
+                                        .onChange(of: state.boardEditor) { _, editor in
+                                            if editor == .new {
+                                                withAnimation(reduceMotion ? nil : .default) {
+                                                    proxy.scrollTo("new", anchor: .trailing)
+                                                }
+                                            }
+                                        }
+                                }
                             }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity)  // fills the row, so "⋯" sits at the right edge
+                // One persistent field over both layouts: typing right after opening lands in it,
+                // and switching layouts never loses the caret.
+                .overlay { searchField }
+                moreMenu
             }
-            // One persistent field over both layouts: typing right after opening lands in it,
-            // and switching layouts never loses the caret.
-            .overlay { searchField }
             .padding(.horizontal, 20)
             .frame(height: 36)
 
@@ -127,7 +134,7 @@ struct PanelView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal) {
-                        LazyHStack(spacing: 16) {
+                        LazyHStack(spacing: 25) {
                             ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
                                 card(clip, index: i)
                             }
@@ -396,6 +403,26 @@ struct PanelView: View {
     private var searchMode: Bool { state.searchExpanded || !state.query.isEmpty }
     private static let searchFieldWidth: CGFloat = 360
 
+    /// The app has no menu bar icon, so settings and quit live here.
+    private var moreMenu: some View {
+        Menu {
+            Button("Настройки…", action: onSettings).keyboardShortcut(",")
+            Divider()
+            Button("Завершить OpenPaste") { NSApp.terminate(nil) }.keyboardShortcut("q")
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(HoverIconStyle())
+        .fixedSize()
+        .help("Ещё")
+        .accessibilityLabel("Ещё")
+    }
+
     private var magnifierButton: some View {
         Button {
             state.searchExpanded = true
@@ -511,7 +538,7 @@ struct CardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             footerBar
         }
-        .frame(width: 230, height: 230)
+        .frame(width: 240, height: 240)
         .background(clip.kind == .link ? Color(white: 0.13) : Color(white: 0.08))
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(
@@ -533,12 +560,12 @@ struct CardView: View {
                     .focused($titleFocused)
                     .onSubmit(onCommitTitle)
                     .onAppear { titleFocused = true }
-                    .padding(.trailing, 56)  // keep clear of the app icon in the corner
+                    .padding(.trailing, 72)  // keep clear of the app icon in the corner
             } else {
                 Text(clip.title ?? Self.defaultTitle(clip))
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                    .padding(.trailing, 56)
+                    .padding(.trailing, 72)
             }
             Text(Self.relative.localizedString(for: clip.date, relativeTo: now))
                 .font(.system(size: 11.5))
@@ -546,13 +573,13 @@ struct CardView: View {
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: 50, maxHeight: 50, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 65, maxHeight: 65, alignment: .leading)
         .background(app.color)
         .overlay(alignment: .topTrailing) {
             if let icon = app.icon {
                 Image(nsImage: icon).resizable()
-                    .frame(width: 60, height: 60)
-                    .offset(x: 7, y: -4)
+                    .frame(width: 78, height: 78)
+                    .offset(x: 9, y: -5)
             }
         }
         .clipped()

@@ -34,6 +34,7 @@ final class PanelController {
     private let panel: PastePanel
     private var monitor: Any?
     private var hideAnimationID: UUID?
+    var onSettings: () -> Void = {}
 
     init(store: ClipStore, shortcuts: ShortcutStore) {
         self.store = store
@@ -56,7 +57,8 @@ final class PanelController {
                 onPaste: { [unowned self] in paste($0) },
                 onDelete: { [unowned self] in delete($0) },
                 onSwitchBoard: { [unowned self] in switchBoard(to: $0) },
-                onPin: { [unowned self] in pin($0, to: $1) }))
+                onPin: { [unowned self] in pin($0, to: $1) },
+                onSettings: { [unowned self] in onSettings() }))
         host.sizingOptions = []  // show() owns the frame; the empty hidden view must not shrink the window
         panel.contentView = host
 
@@ -88,7 +90,7 @@ final class PanelController {
         panel.setFrame(
             NSRect(
                 x: f.minX, y: f.minY, width: f.width,
-                height: 325 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
+                height: 335 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
             display: true)
 
         store.pruneExpired()

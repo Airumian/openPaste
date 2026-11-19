@@ -6,16 +6,10 @@ struct OpenPasteApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        MenuBarExtra("OpenPaste", systemImage: "doc.on.clipboard") {
-            Button(
-                "Показать историю"
-                    + (delegate.shortcuts[.togglePanel].map { "  " + $0.display } ?? "")
-            ) {
-                delegate.panel.toggle()
-            }
-            Button("Настройки…") { delegate.showSettings() }.keyboardShortcut(",")
-            Divider()
-            Button("Выход") { NSApp.terminate(nil) }.keyboardShortcut("q")
+        // No menu bar icon: settings and quit are in the panel's "⋯" menu. A scene is still required;
+        // a Settings scene would open its own empty window on ⌘, next to ours.
+        MenuBarExtra("OpenPaste", systemImage: "doc.on.clipboard", isInserted: .constant(false)) {
+            EmptyView()
         }
     }
 }
@@ -31,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)  // no Dock icon
         store.start()
+        panel.onSettings = { [weak self] in self?.showSettings() }
         hotKey = HotKey { [weak self] in self?.panel.toggle() }
         shortcuts.applyGlobalShortcut = { [weak self] in self?.hotKey?.setShortcut($0) }
         shortcuts.recordingChanged = { [weak self] in self?.hotKey?.setSuspended($0) }
