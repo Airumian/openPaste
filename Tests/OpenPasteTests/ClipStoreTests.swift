@@ -84,6 +84,17 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertTrue(s.clips.isEmpty)
     }
 
+    func testMovePinboardAcrossMultipleTabs() {
+        let store = makeStore()
+        let first = store.addPinboard(name: "A")
+        _ = store.addPinboard(name: "B")
+        _ = store.addPinboard(name: "C")
+
+        store.movePinboard(first.id, by: 2)
+
+        XCTAssertEqual(reload(store).pinboards.map(\.name), ["B", "C", "A"])
+    }
+
     func testRenameAndMovePinboards() {
         let s = makeStore()
         let a = s.addPinboard(name: "A")

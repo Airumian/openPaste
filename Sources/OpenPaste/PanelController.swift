@@ -8,6 +8,7 @@ final class PanelState {
     var shownAt = Date()
     var isVisible = false
     var board: UUID?  // nil = clipboard history tab
+    var searchExpanded = false  // search field opened via the magnifier (it also shows whenever the query is non-empty)
     var renamingClip: UUID?  // card whose title is being edited inline
     var boardEditor: BoardEditor?  // inline name field for a new or renamed pinboard
     var dragging: Clip?  // card being dragged onto a pinboard tab
@@ -32,6 +33,7 @@ final class PanelController {
     let state = PanelState()
     private let panel: PastePanel
     private var monitor: Any?
+    private var hideAnimationID: UUID?
 
     init(store: ClipStore, shortcuts: ShortcutStore) {
         self.store = store
@@ -61,7 +63,10 @@ final class PanelController {
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hide() }
+            MainActor.assumeIsolated {
+                guard let self, self.state.isVisible else { return }
+                self.hide(animated: true)
+            }
         }
     }
 
@@ -69,6 +74,12 @@ final class PanelController {
     func toggle() { state.isVisible ? hide(animated: true) : show() }
 
     func show() {
+        if state.isVisible {
+            panel.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        hideAnimationID = nil
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
         let f = screen.frame
@@ -77,7 +88,7 @@ final class PanelController {
         panel.setFrame(
             NSRect(
                 x: f.minX, y: f.minY, width: f.width,
-                height: 320 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
+                height: 325 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
             display: true)
 
         store.pruneExpired()
@@ -85,6 +96,7 @@ final class PanelController {
         state.selection = 0
         state.boardEditor = nil
         state.renamingClip = nil
+        state.searchExpanded = false
         state.dragging = nil
         if let b = state.board, !store.pinboards.contains(where: { $0.id == b }) {
             state.board = nil
@@ -92,7 +104,8 @@ final class PanelController {
         state.shownAt = Date()
         panel.makeKeyAndOrderFront(nil)
         // Content is inserted under an animation, so PanelView's transition slides it up from the screen edge.
-        withAnimation(.spring(duration: 0.35, bounce: 0.12)) { state.isVisible = true }
+        // Critically damped: no gesture momentum behind a hotkey, so no overshoot (Apple's default spring).
+        withAnimation(.spring(duration: 0.35, bounce: 0)) { state.isVisible = true }
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, e.window === panel else { return e }
@@ -100,21 +113,24 @@ final class PanelController {
         }
     }
 
-    /// `animated` slides the panel down (Esc, hotkey). Pasting and clicking away hide instantly,
-    /// so the target app gets keyboard focus back before the synthetic ⌘V.
+    /// Pasting hides immediately so the target app gets keyboard focus before the synthetic ⌘V.
     func hide(animated: Bool = false) {
         guard panel.isVisible else { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         guard animated else {
+            hideAnimationID = nil
             panel.orderOut(nil)
             state.isVisible = false
             return
         }
-        withAnimation(.easeIn(duration: 0.2)) {
+        let animationID = UUID()
+        hideAnimationID = animationID
+        withAnimation(.spring(duration: 0.25, bounce: 0)) {  // mirrors the entrance spring
             state.isVisible = false
         } completion: { [weak self] in
-            guard let self, !state.isVisible else { return }  // reopened mid-animation: keep the window
+            guard let self, hideAnimationID == animationID else { return }
+            hideAnimationID = nil
             panel.orderOut(nil)
         }
     }
@@ -136,13 +152,19 @@ final class PanelController {
             }
             return true
         }
-        guard let action = shortcuts.action(for: e, searchIsEmpty: state.query.isEmpty) else { return false }
+        guard let action = shortcuts.action(for: e, searchIsEmpty: state.query.isEmpty) else {
+            return false
+        }
         switch action {
         case .previousBoard: moveBoard(-1)
         case .nextBoard: moveBoard(+1)
         case .previousClip: state.selection = max(state.selection - 1, 0)
         case .nextClip: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
         case .paste: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
+        case .close where !state.query.isEmpty || state.searchExpanded:
+            // First Esc leaves search (clears and collapses it); the next one closes the panel.
+            state.query = ""
+            state.searchExpanded = false
         case .close: hide(animated: true)
         case .delete where !state.query.isEmpty:  // Clear the search before deleting cards, like a text field.
             state.query = ""
@@ -189,7 +211,8 @@ final class PanelController {
     }
 
     private func switchBoard(to board: UUID?) {
-        withAnimation(.bouncy(duration: 0.35)) { state.board = board }
+        // No withAnimation here: it animated the whole card list too, making it flicker on every switch.
+        state.board = board
         state.selection = 0
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PanelView: View {
     let store: ClipStore
@@ -13,7 +14,6 @@ struct PanelView: View {
     @State private var boardName = ""
     @State private var dropTarget: UUID?
     @State private var clipTitleDraft = ""
-    @Namespace private var glass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Field { case search, boardName }
@@ -29,10 +29,19 @@ struct PanelView: View {
     }
 
     /// Menus render SF Symbols as monochrome templates, so color swatches are drawn as plain images.
-    private static func swatch(_ color: Color) -> NSImage {
+    /// The palette menu scales the image up, so the dot is drawn inset to land at Finder-tag size;
+    /// the selected color gets a ring, since the default selection effect is off (.custom).
+    private static func swatch(_ color: Color, selected: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
             NSColor(color).setFill()
-            NSBezierPath(ovalIn: rect).fill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 3, dy: 3)).fill()
+            if selected {
+                // Dark halo around the selected dot, as in the Finder-style tag picker.
+                let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 1.25, dy: 1.25))
+                ring.lineWidth = 2.5
+                NSColor.black.withAlphaComponent(0.75).setStroke()
+                ring.stroke()
+            }
             return true
         }
         image.isTemplate = false
@@ -52,7 +61,9 @@ struct PanelView: View {
                     .transition(
                         reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
                     )
-                    .onAppear { DispatchQueue.main.async { focus = .search } }
+                    .onAppear {
+                        DispatchQueue.main.async { focus = .search }
+                    }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -61,58 +72,61 @@ struct PanelView: View {
     private var panelContent: some View {
         let clips = state.visibleClips(store)
         return VStack(spacing: 14) {
-            GlassGroup {
-                HStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Поиск", text: $state.query)
-                            .textFieldStyle(.plain)
-                            .focused($focus, equals: .search)
-                            .frame(width: 200)
+            ZStack {
+                if searchMode {
+                    // Search mode, as in Paste: a wide field dead-center, tabs shrink to icons on its right.
+                    HStack(spacing: 0) {
+                        Color.clear.frame(maxWidth: .infinity)
+                        Color.clear.frame(width: Self.searchFieldWidth + 24)
+                        ScrollView(.horizontal) { compactTabs }
+                            .scrollIndicators(.hidden)
+                            .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 7)
-                    .liquidGlass(in: Capsule())
-
-                    tab(
-                        nil, title: "Буфер обмена",
-                        icon: Image(systemName: "clock.arrow.circlepath"), tint: nil)
-                    ForEach(Array(store.pinboards.enumerated()), id: \.element.id) { i, board in
-                        if state.boardEditor == .rename(board.id) {
-                            nameField
-                        } else {
-                            boardTab(board, index: i)
+                } else {
+                    // Fits: one centered group, nothing scrolls. Too many pinboards: search and "+" stay pinned
+                    // to the edges and only the tabs between them scroll.
+                    ViewThatFits(in: .horizontal) {
+                        headerRow(scrolling: false) { tabsRow }
+                        headerRow(scrolling: true) {
+                            ScrollViewReader { proxy in
+                                ScrollView(.horizontal) { tabsRow.padding(.horizontal, 4) }
+                                    .scrollIndicators(.hidden)
+                                    .onChange(of: state.board) { _, board in
+                                        withAnimation(reduceMotion ? nil : .default) {
+                                            proxy.scrollTo(
+                                                board?.uuidString ?? "history", anchor: .center)
+                                        }
+                                    }
+                                    .onChange(of: state.boardEditor) { _, editor in
+                                        if editor == .new {
+                                            withAnimation(reduceMotion ? nil : .default) {
+                                                proxy.scrollTo("new", anchor: .trailing)
+                                            }
+                                        }
+                                    }
+                            }
                         }
-                    }
-                    if state.boardEditor == .new {
-                        nameField
-                    } else {
-                        Button {
-                            boardName = ""
-                            state.boardEditor = .new
-                        } label: {
-                            Image(systemName: "plus").frame(width: 30, height: 30)
-                                .liquidGlass(in: Circle(), interactive: true)
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Новый пинборд")
                     }
                 }
             }
+            // One persistent field over both layouts: typing right after opening lands in it,
+            // and switching layouts never loses the caret.
+            .overlay { searchField }
+            .padding(.horizontal, 20)
+            .frame(height: 36)
 
             if clips.isEmpty {
                 Text(
                     !state.query.isEmpty
                         ? "Ничего не найдено"
-                        : state.board == nil
-                            ? "История пуста — скопируйте что-нибудь"
-                            : "Пинборд пуст — перетащите сюда карточку или выберите правый клик → «Закрепить в»"
+                        : state.board == nil ? "История пуста" : "Пинборд пуст"
                 )
-                .foregroundStyle(.secondary)
+                .font(.system(size: 22))  // large and quiet, as in Paste
+                .foregroundStyle(.tertiary)
                 .frame(maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
+                    ScrollView(.horizontal) {
                         LazyHStack(spacing: 16) {
                             ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
                                 card(clip, index: i)
@@ -120,9 +134,10 @@ struct PanelView: View {
                         }
                         .padding(.horizontal, 20)
                     }
+                    .scrollIndicators(.hidden)
                     .onChange(of: state.selection) { _, i in
                         guard clips.indices.contains(i) else { return }
-                        withAnimation(.easeOut(duration: 0.15)) {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
                             proxy.scrollTo(clips[i].id, anchor: .center)
                         }
                     }
@@ -159,6 +174,11 @@ struct PanelView: View {
         // Single click selects at once; a sequential double-tap gesture would delay it by the double-click interval.
         .onTapGesture { state.selection = i }
         .simultaneousGesture(TapGesture(count: 2).onEnded { onPaste(clip) })
+        // Tap gestures are invisible to VoiceOver: expose the card as a button whose default action pastes.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onPaste(clip) }
+        .accessibilityAction(named: "Удалить") { onDelete(clip) }
         .onDrag {
             state.dragging = clip
             // Real content, so the card can also be dropped into other apps.
@@ -185,7 +205,8 @@ struct PanelView: View {
                             if n < 9, shortcuts.pinboardModifier != .disabled {
                                 Button(board.name) { onPin(clip, board) }
                                     .keyboardShortcut(
-                                        KeyEquivalent(Character("\(n + 1)")), modifiers: shortcuts.pinboardModifier.eventModifiers)
+                                        KeyEquivalent(Character("\(n + 1)")),
+                                        modifiers: shortcuts.pinboardModifier.eventModifiers)
                             } else {
                                 Button(board.name) { onPin(clip, board) }
                             }
@@ -199,7 +220,7 @@ struct PanelView: View {
         }
     }
 
-    private func boardTab(_ board: Pinboard, index i: Int) -> some View {
+    private func boardTab(_ board: Pinboard, index i: Int, compact: Bool = false) -> some View {
         let targeted = Binding(
             get: { dropTarget == board.id },
             set: { on in
@@ -207,31 +228,61 @@ struct PanelView: View {
             })
         return tab(
             board.id, title: board.name,
-            icon: Image(systemName: "circle.fill").foregroundStyle(Self.color(of: board)),
-            tint: Self.color(of: board)
+            icon: Circle().fill(Self.color(of: board)).frame(width: 12, height: 12),
+            compact: compact
         )
         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(board) })
         .overlay(
             Capsule().strokeBorder(Color.accentColor, lineWidth: 2).opacity(
                 dropTarget == board.id ? 1 : 0)
         )
-        .onDrop(of: [.item], isTargeted: targeted) { _ in
+        .onDrag {
+            state.dragging = nil
+            let provider = NSItemProvider()
+            provider.suggestedName = board.id.uuidString
+            provider.registerDataRepresentation(
+                forTypeIdentifier: Self.pinboardDropType.identifier, visibility: .ownProcess
+            ) { completion in
+                completion(Data(), nil)
+                return nil
+            }
+            return provider
+        }
+        .onDrop(of: [.item, Self.pinboardDropType], isTargeted: targeted) { providers in
+            if let provider = providers.first(where: {
+                $0.hasItemConformingToTypeIdentifier(Self.pinboardDropType.identifier)
+            }) {
+                guard let name = provider.suggestedName, let source = UUID(uuidString: name),
+                    let from = store.pinboards.firstIndex(where: { $0.id == source }),
+                    let to = store.pinboards.firstIndex(where: { $0.id == board.id })
+                else { return false }
+                withAnimation(tabAnimation) { store.movePinboard(source, by: to - from) }
+                return true
+            }
             defer { state.dragging = nil }
             guard let clip = state.dragging else { return false }  // drops from other apps are ignored
             onPin(clip, board)
             return true
         }
-        .help(i < 9 && shortcuts.pinboardModifier != .disabled
-              ? "\(shortcuts.pinboardModifier.symbol)\(i + 1) закрепляет выбранную карточку сюда" : "")
+        .help(
+            i < 9 && shortcuts.pinboardModifier != .disabled
+                ? "\(shortcuts.pinboardModifier.symbol)\(i + 1) закрепляет выбранную карточку сюда"
+                : ""
+        )
         .contextMenu {
             Button("Переименовать") { startRename(board) }
-            Button("Сдвинуть влево") { store.movePinboard(board.id, by: -1) }
-                .disabled(i == 0)
-            Button("Сдвинуть вправо") { store.movePinboard(board.id, by: +1) }
-                .disabled(i == store.pinboards.count - 1)
+            Button("Сдвинуть влево") {
+                withAnimation(tabAnimation) { store.movePinboard(board.id, by: -1) }
+            }
+            .disabled(i == 0)
+            Button("Сдвинуть вправо") {
+                withAnimation(tabAnimation) { store.movePinboard(board.id, by: +1) }
+            }
+            .disabled(i == store.pinboards.count - 1)
             Button("Удалить", role: .destructive) {
                 if state.board == board.id { onSwitchBoard(nil) }
-                store.deletePinboard(board)
+                // Animated, so the tabs to the right slide left into the gap instead of jumping.
+                withAnimation(tabAnimation) { store.deletePinboard(board) }
             }
             Divider()
             // .palette renders the options as one row of swatches, like Finder tags.
@@ -245,14 +296,77 @@ struct PanelView: View {
                     Label {
                         Text(Self.boardColors[i].name)
                     } icon: {
-                        Image(nsImage: Self.swatch(Self.boardColors[i].color))
+                        Image(
+                            nsImage: Self.swatch(
+                                Self.boardColors[i].color,
+                                selected: i == board.color % Self.boardColors.count))
                     }
                     .tag(i)
                 }
             }
             .pickerStyle(.palette)
+            .paletteSelectionEffect(.custom)
             .labelsHidden()
         }
+    }
+
+    /// Dividers appear only in the scrolling layout, where they mark where the tabs scroll under.
+    private func headerRow(scrolling: Bool, @ViewBuilder tabs: () -> some View) -> some View {
+        HStack(spacing: 10) {
+            magnifierButton
+            if scrolling { Divider().frame(height: 20) }
+            tabs()
+            if scrolling { Divider().frame(height: 20) }
+            Button(action: startNewBoard) {
+                Image(systemName: "plus")
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(HoverIconStyle())
+            .help("Новый пинборд")
+            .accessibilityLabel("Новый пинборд")
+        }
+    }
+
+    private var tabsRow: some View {
+        GlassGroup {
+            HStack(spacing: 10) {
+                tab(nil, title: "Буфер обмена", icon: Image(systemName: "clock.arrow.circlepath"))
+                    .id("history")
+                ForEach(Array(store.pinboards.enumerated()), id: \.element.id) { i, board in
+                    Group {
+                        if state.boardEditor == .rename(board.id) {
+                            nameField(color: Self.color(of: board))
+                        } else {
+                            boardTab(board, index: i)
+                        }
+                    }
+                    .id(board.id.uuidString)
+                }
+                if state.boardEditor == .new {
+                    // Same color addPinboard will assign, so the dot doesn't change on Enter.
+                    nameField(
+                        color: Self.boardColors[store.pinboards.count % Self.boardColors.count]
+                            .color
+                    )
+                    .id("new")
+                }
+            }
+        }
+    }
+
+    /// "+" while a name field is open commits that pinboard first, so "+ + +" quickly makes several.
+    private func startNewBoard() {
+        let wasEditing = state.boardEditor != nil
+        if wasEditing { commitBoardName() }
+        let open = {
+            boardName = "Без названия"  // prefilled and selected: type to replace, or just press Enter
+            // Animated like removal in reverse: the field slides in from the right, "+" glides along.
+            withAnimation(tabAnimation) { state.boardEditor = .new }
+        }
+        // Reopen on the next tick so the editor goes nil → .new and the field refocuses with its text selected.
+        if wasEditing { DispatchQueue.main.async(execute: open) } else { open() }
     }
 
     private func startRename(_ board: Pinboard) {
@@ -260,53 +374,118 @@ struct PanelView: View {
         state.boardEditor = .rename(board.id)
     }
 
-    private var nameField: some View {
-        TextField("Название", text: $boardName)
-            .textFieldStyle(.plain)
-            .focused($focus, equals: .boardName)
-            .frame(width: 140)
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .liquidGlass(in: Capsule())
-            .onSubmit(commitBoardName)
+    private func nameField(color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 12, height: 12)
+            TextField("Название", text: $boardName)
+                .textFieldStyle(.plain)
+                .font(Self.tabTitleFont)
+                .focused($focus, equals: .boardName)
+                .frame(width: 120)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .liquidGlass(in: Capsule())
+        .onSubmit(commitBoardName)
     }
 
-    /// The selected tab sits in a glass capsule that morphs between tabs on switch.
-    private func tab(_ id: UUID?, title: String, icon: some View, tint: Color?) -> some View {
+    private var tabAnimation: Animation? { reduceMotion ? nil : .smooth(duration: 0.3) }
+    private static let tabTitleFont = Font.system(size: 13)
+    private static let pinboardDropType = UTType(
+        exportedAs: "dev.openpaste.pinboard-order", conformingTo: .data)
+
+    private var searchMode: Bool { state.searchExpanded || !state.query.isEmpty }
+    private static let searchFieldWidth: CGFloat = 360
+
+    private var magnifierButton: some View {
+        Button {
+            state.searchExpanded = true
+            focus = .search
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(HoverIconStyle())
+        .help("Поиск")
+        .accessibilityLabel("Поиск")
+    }
+
+    /// Collapsed to an invisible 1 pt sliver outside search mode; it still holds keyboard focus,
+    /// so the first typed letter already searches and switches the header into search mode.
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Поиск", text: $state.query)
+                .textFieldStyle(.plain)
+                .focused($focus, equals: .search)
+        }
+        .padding(.horizontal, 12)
+        .frame(width: searchMode ? Self.searchFieldWidth : 1, height: 32)
+        .clipped()
+        .background(Capsule().fill(.quaternary))
+        .overlay(
+            Capsule().strokeBorder(
+                Color.accentColor.opacity(focus == .search ? 0.9 : 0), lineWidth: 2)
+        )
+        .opacity(searchMode ? 1 : 0)
+        .allowsHitTesting(searchMode)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: searchMode)
+    }
+
+    /// Tabs reduced to their icons while searching: the clock for history, color dots for pinboards.
+    private var compactTabs: some View {
+        GlassGroup {
+            HStack(spacing: 4) {
+                tab(
+                    nil, title: "Буфер обмена", icon: Image(systemName: "clock.arrow.circlepath"),
+                    compact: true)
+                ForEach(Array(store.pinboards.enumerated()), id: \.element.id) { i, board in
+                    boardTab(board, index: i, compact: true)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    private func tab(_ id: UUID?, title: String, icon: some View, compact: Bool = false)
+        -> some View
+    {
         Button {
             onSwitchBoard(id)
         } label: {
-            let label = HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 icon
-                Text(title)
+                if !compact {
+                    Text(title).font(Self.tabTitleFont)
+                }
             }
-            .padding(.horizontal, 12).padding(.vertical, 7)
+            .padding(.horizontal, compact ? 9 : 14).padding(.vertical, 8)
             .contentShape(Capsule())
-
-            if state.board == id {
-                label
-                    .liquidGlass(in: Capsule(), tint: tint?.opacity(0.35), interactive: true)
-                    .liquidGlassID("selected-tab", in: glass)
-            } else {
-                label
-            }
+            .background(Capsule().fill(.white.opacity(state.board == id ? 0.1 : 0)))
+            .animation(nil, value: state.board)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverIconStyle(shape: AnyShape(Capsule()), showsHover: state.board != id))
+        .accessibilityLabel(title)  // compact tabs show only an icon
     }
 
     private func commitBoardName() {
         let name = boardName.trimmingCharacters(in: .whitespaces)
         let editor = state.boardEditor
-        state.boardEditor = nil
-        guard !name.isEmpty else { return }
-        switch editor {
-        case .new: onSwitchBoard(store.addPinboard(name: name).id)
-        case .rename(let id): store.renamePinboard(id, to: name)
-        case nil: break
+        withAnimation(tabAnimation) {
+            state.boardEditor = nil
+            guard !name.isEmpty else { return }
+            switch editor {
+            case .new: onSwitchBoard(store.addPinboard(name: name).id)
+            case .rename(let id): store.renamePinboard(id, to: name)
+            case nil: break
+            }
         }
     }
 }
 
 struct CardView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let clip: Clip
     let index: Int
     let selected: Bool
@@ -337,7 +516,9 @@ struct CardView: View {
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 4)
+                .strokeBorder(Color.accentColor, lineWidth: 4)
+                .opacity(selected ? 1 : 0)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
         )
         .environment(\.colorScheme, .dark)
     }
@@ -435,6 +616,34 @@ struct CardView: View {
         case .link: Format.linkLabel(clip.text ?? "")
         case .image: ""
         case .file: clip.files.first?.path ?? ""
+        }
+    }
+}
+
+/// Header buttons (magnifier, "+", tabs): a soft gray shape appears under them on hover, as in Paste.
+private struct HoverIconStyle: ButtonStyle {
+    var shape = AnyShape(Circle())
+    var showsHover = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        HoverBody(configuration: configuration, shape: shape, showsHover: showsHover)
+    }
+
+    private struct HoverBody: View {
+        let configuration: Configuration
+        let shape: AnyShape
+        let showsHover: Bool
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .background(
+                    shape.fill(.quaternary).opacity(hovering && isEnabled && showsHover ? 1 : 0)
+                )
+                .opacity(configuration.isPressed ? 0.6 : 1)
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
         }
     }
 }

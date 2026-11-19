@@ -223,7 +223,8 @@ final class ClipStore {
     /// Restores the last deleted clip at its old position; returns it, or nil if there is nothing to undo.
     @discardableResult
     func undoDelete() -> Clip? {
-        guard var (clip, index) = trash else { return nil }
+        guard let (deleted, index) = trash else { return nil }
+        var clip = deleted
         trash = nil
         if let b = clip.pinboardID, !pinboards.contains(where: { $0.id == b }) {
             clip.pinboardID = nil  // its pinboard was deleted meanwhile: restore into history
@@ -280,12 +281,13 @@ final class ClipStore {
         save()
     }
 
-    /// Shifts a pinboard left (-1) or right (+1) among the tabs; no-op at the ends.
+    /// Moves a pinboard relative to its current position, preserving the order of the other tabs.
     func movePinboard(_ id: UUID, by delta: Int) {
         guard let i = pinboards.firstIndex(where: { $0.id == id }),
-            pinboards.indices.contains(i + delta)
+            delta != 0, pinboards.indices.contains(i + delta)
         else { return }
-        pinboards.swapAt(i, i + delta)
+        let board = pinboards.remove(at: i)
+        pinboards.insert(board, at: i + delta)
         save()
     }
 

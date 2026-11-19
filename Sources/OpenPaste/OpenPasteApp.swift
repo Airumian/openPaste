@@ -7,7 +7,10 @@ struct OpenPasteApp: App {
 
     var body: some Scene {
         MenuBarExtra("OpenPaste", systemImage: "doc.on.clipboard") {
-            Button("Показать историю" + (delegate.shortcuts[.togglePanel].map { "  " + $0.display } ?? "")) {
+            Button(
+                "Показать историю"
+                    + (delegate.shortcuts[.togglePanel].map { "  " + $0.display } ?? "")
+            ) {
                 delegate.panel.toggle()
             }
             Button("Настройки…") { delegate.showSettings() }.keyboardShortcut(",")
@@ -33,13 +36,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcuts.recordingChanged = { [weak self] in self?.hotKey?.setSuspended($0) }
         shortcuts.errorMessage = hotKey?.setShortcut(shortcuts[.togglePanel])
         Paster.requestAccess()
+        panel.show()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        panel.show()
+        return false
     }
 
     /// Own window instead of the SwiftUI Settings scene: openSettings is unreliable in menu-bar-only apps.
     func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentViewController: NSHostingController(rootView: SettingsView(store: store, shortcuts: shortcuts)))
+                contentViewController: NSHostingController(
+                    rootView: SettingsView(store: store, shortcuts: shortcuts)))
             window.title = "Настройки OpenPaste"
             window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
             window.titleVisibility = .hidden
