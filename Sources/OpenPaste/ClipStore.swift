@@ -39,6 +39,7 @@ struct Pinboard: Codable, Identifiable, Equatable {
 final class ClipStore {
     private(set) var clips: [Clip] = []
     private(set) var pinboards: [Pinboard] = []
+    private(set) var persistenceError: String?
     let dir: URL
     let limit: Int
     private var lastChange = NSPasteboard.general.changeCount
@@ -50,6 +51,8 @@ final class ClipStore {
         return cache
     }()
     @ObservationIgnored private var saveScheduled = false
+    @ObservationIgnored private var needsSave = false
+    @ObservationIgnored private var saveRevision = 0
     /// Disk writes and image encoding, off the main thread. Serial, so saves land in order.
     private static let io = DispatchQueue(label: "openpaste.io", qos: .utility)
     static let thumbnailPixels = 480  // card is 232 pt wide, 2x on Retina
@@ -177,12 +180,16 @@ final class ClipStore {
         var clip = clip
         if clip.textFile == nil, let text = clip.text, text.utf8.count > Self.bigTextBytes {
             // Keep multi-MB logs out of memory and history.json; search and cards only need the start.
-            clip.textFile = "\(clip.id).txt"
-            try? text.write(
-                to: textsDir.appendingPathComponent(clip.textFile!), atomically: true,
-                encoding: .utf8)
-            clip.textLength = text.count
-            clip.text = String(text.prefix(Self.previewChars))
+            let file = "\(clip.id).txt"
+            do {
+                try text.write(
+                    to: textsDir.appendingPathComponent(file), atomically: true, encoding: .utf8)
+                clip.textFile = file
+                clip.textLength = text.count
+                clip.text = String(text.prefix(Self.previewChars))
+            } catch {
+                // Preserve the complete text in history.json if the sidecar cannot be written.
+            }
         }
         // Duplicates move to the front of their board. Big texts compare only previews, so they never dedupe.
         if clip.textFile == nil, let text = clip.text,
@@ -484,21 +491,45 @@ final class ClipStore {
     // shortcut: whole history rewritten as JSON on every change, fine for ~500 items; move to SQLite/GRDB if the limit grows.
     /// Coalesces bursts of changes into one background write ~0.5 s later.
     private func save() {
+        needsSave = true
+        saveRevision += 1
         guard !saveScheduled else { return }
         saveScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.flush() }
     }
 
-    /// Writes pending changes now; `wait` blocks until they are on disk (app quit, tests).
+    /// Failed writes keep the current snapshot pending for retry.
     func flush(wait: Bool = false) {
-        if saveScheduled {
-            saveScheduled = false
-            let (clips, pinboards, history, boards) = (clips, pinboards, historyFile, pinboardsFile)
-            Self.io.async {
-                try? JSONEncoder().encode(clips).write(to: history, options: .atomic)
-                try? JSONEncoder().encode(pinboards).write(to: boards, options: .atomic)
+        saveScheduled = false
+        guard needsSave else { return }
+        saveRevision += 1
+        let revision = saveRevision
+        let (clips, pinboards, history, boards) = (clips, pinboards, historyFile, pinboardsFile)
+        let write = {
+            Result {
+                try JSONEncoder().encode(clips).write(to: history, options: .atomic)
+                try JSONEncoder().encode(pinboards).write(to: boards, options: .atomic)
             }
         }
-        if wait { Self.io.sync {} }
+        if wait {
+            finishSave(Self.io.sync(execute: write), revision: revision)
+        } else {
+            Self.io.async { [weak self] in
+                let result = write()
+                DispatchQueue.main.async { self?.finishSave(result, revision: revision) }
+            }
+        }
+    }
+
+    private func finishSave(_ result: Result<Void, Error>, revision: Int) {
+        guard revision == saveRevision else { return }
+        switch result {
+        case .success:
+            needsSave = false
+            persistenceError = nil
+        case .failure(let error):
+            needsSave = true
+            persistenceError = error.localizedDescription
+        }
     }
 }

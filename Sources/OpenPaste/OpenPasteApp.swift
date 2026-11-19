@@ -61,7 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        store.flush(wait: true)  // saves are debounced; don't lose the last half second
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        store.flush(wait: true)
+        guard let error = store.persistenceError else { return .terminateNow }
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Не удалось сохранить историю"
+        alert.informativeText = error
+        alert.addButton(withTitle: "Оставить OpenPaste открытым")
+        alert.addButton(withTitle: "Выйти без сохранения")
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
     }
 }

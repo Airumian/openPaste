@@ -93,16 +93,27 @@ final class ShortcutTests: XCTestCase {
         }
     }
 
+    func testSelectionKeepsCardIDsWhenNewClipArrives() {
+        let state = PanelState()
+        let original = (0..<3).map { Clip(kind: .text, text: String($0)) }
+        state.selectAll(in: original)
+        let changed = [Clip(kind: .text, text: "new")] + original
+        let selected = state.selectedIDs(in: changed)
+        XCTAssertEqual(state.cursorIndex(in: changed), 1)
+        XCTAssertEqual(changed.filter { selected.contains($0.id) }, original)
+    }
+
     func testSelectionRangeGrowsAndCollapses() {
         let state = PanelState()
-        state.selection = 2
-        state.extendSelection(to: 3)
-        state.extendSelection(to: 4)
-        XCTAssertEqual(state.selectedRange, 2...4)
-        state.extendSelection(to: 1)  // crossing the anchor flips the range
-        XCTAssertEqual(state.selectedRange, 1...2)
-        state.selection = 5  // plain move collapses
-        XCTAssertEqual(state.selectedRange, 5...5)
+        let clips = (0..<6).map { Clip(kind: .text, text: String($0)) }
+        state.select(clips[2].id)
+        state.extendSelection(to: 3, in: clips)
+        state.extendSelection(to: 4, in: clips)
+        XCTAssertEqual(state.selectedIDs(in: clips), Set(clips[2...4].map(\.id)))
+        state.extendSelection(to: 1, in: clips)
+        XCTAssertEqual(state.selectedIDs(in: clips), Set(clips[1...2].map(\.id)))
+        state.select(clips[5].id)
+        XCTAssertEqual(state.selectedIDs(in: clips), [clips[5].id])
         state.tabbedToCards = true
         state.query = "a"  // typing again returns Tab to "first card"
         XCTAssertFalse(state.tabbedToCards)

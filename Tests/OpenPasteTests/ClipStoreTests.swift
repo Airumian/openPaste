@@ -22,6 +22,33 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: s.textsDir.path), [])
     }
 
+    func testFailedExternalWritePreservesFullText() throws {
+        let store = makeStore()
+        try FileManager.default.removeItem(at: store.textsDir)
+        try Data().write(to: store.textsDir)
+        let text = String(repeating: "full text\n", count: 6_000)
+        store.add(Clip(kind: .text, text: text))
+        let reopened = reload(store)
+        let saved = try XCTUnwrap(reopened.clips.first)
+        XCTAssertNil(saved.textFile)
+        XCTAssertEqual(reopened.fullText(saved), text)
+    }
+
+    func testFailedSaveCanBeRetriedWithoutAnotherChange() throws {
+        let store = makeStore()
+        let path = store.dir.appendingPathComponent("history.json")
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
+        store.add(Clip(kind: .text, text: "keep this"))
+        store.flush(wait: true)
+        XCTAssertNotNil(store.persistenceError)
+        XCTAssertEqual(store.clips.first?.text, "keep this")
+
+        try FileManager.default.removeItem(at: path)
+        store.flush(wait: true)
+        XCTAssertNil(store.persistenceError)
+        XCTAssertEqual(reload(store).clips.first?.text, "keep this")
+    }
+
     func testEditingKeepsCardIdentityAndPersistsFullText() throws {
         let store = makeStore()
         let board = store.addPinboard(name: "Pinned")

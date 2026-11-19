@@ -53,6 +53,7 @@ struct PanelView: View {
 
     private var panelContent: some View {
         let clips = state.visibleClips(store)
+        let selected = state.selectedIDs(in: clips)
         return VStack(spacing: 12) {
             HStack(spacing: 10) {
                 // Mirrors the "⋯" button so the header group stays centered.
@@ -117,7 +118,7 @@ struct PanelView: View {
                     ScrollView(.horizontal) {
                         LazyHStack(spacing: 24) {
                             ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
-                                card(clip, index: i)
+                                card(clip, index: i, selected: selected.contains(clip.id))
                                     .transition(CardRemoval())
                             }
                         }
@@ -125,10 +126,10 @@ struct PanelView: View {
                         .id(Self.stripStart)  // scrolling to the whole strip keeps its leading padding
                     }
                     .scrollIndicators(.hidden)
-                    .onChange(of: state.selection) { _, i in
-                        guard clips.indices.contains(i) else { return }
+                    .onChange(of: state.cursor) { _, id in
+                        guard let id, clips.contains(where: { $0.id == id }) else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
-                            proxy.scrollTo(clips[i].id, anchor: .center)
+                            proxy.scrollTo(id, anchor: .center)
                         }
                     }
                     .onChange(of: state.shownAt) { _, _ in
@@ -143,7 +144,6 @@ struct PanelView: View {
         .padding(.top, 12).padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .liquidGlass(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .onChange(of: state.query) { _, _ in state.selection = 0 }
         .onChange(of: state.shownAt) { _, _ in focus = .search }
         .onChange(of: state.searchFocusRequest) { _, _ in focus = .search }
         .onChange(of: state.tabbedToCards) { _, onCards in focus = onCards ? nil : .search }
@@ -151,11 +151,11 @@ struct PanelView: View {
         }
     }
 
-    private func card(_ clip: Clip, index i: Int) -> some View {
+    private func card(_ clip: Clip, index i: Int, selected: Bool) -> some View {
         CardView(
             clip: clip, index: i + 1,
             selected: state.deletionSelection.map { $0 == clip.id }
-                ?? state.selectedRange.contains(i),
+                ?? selected,
             now: state.shownAt,
             thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil,
             titleDraft: state.renamingClip == clip.id ? $clipTitleDraft : nil,
@@ -166,7 +166,7 @@ struct PanelView: View {
         )
         .id(clip.id)
         // Single click selects at once; a sequential double-tap gesture would delay it by the double-click interval.
-        .onTapGesture { state.selection = i }
+        .onTapGesture { state.select(clip.id) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { onPaste(clip) })
         // Tap gestures are invisible to VoiceOver: expose the card as a button whose default action pastes.
         .accessibilityElement(children: .combine)
@@ -192,7 +192,7 @@ struct PanelView: View {
             }
             Button("Переименовать") {
                 clipTitleDraft = clip.title ?? CardView.defaultTitle(clip)
-                state.selection = i
+                state.select(clip.id)
                 state.renamingClip = clip.id
             }
             if !store.pinboards.isEmpty {
@@ -453,20 +453,27 @@ struct PanelView: View {
     /// The app has no menu bar icon, so settings and quit live here.
     private var moreMenu: some View {
         Menu {
+            if store.persistenceError != nil {
+                Button("Повторить сохранение истории") { store.flush() }
+                Divider()
+            }
             Button("Настройки…", action: onSettings).keyboardShortcut(",")
             Divider()
             Button("Завершить OpenPaste") { NSApp.terminate(nil) }.keyboardShortcut("q")
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 16, weight: .medium))
-                .frame(width: 34, height: 34)
-                .contentShape(Rectangle())
+            Image(
+                systemName: store.persistenceError == nil ? "ellipsis" : "exclamationmark.triangle"
+            )
+            .font(.system(size: 16, weight: .medium))
+            .frame(width: 34, height: 34)
+            .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
         .buttonStyle(HoverIconStyle())
         .fixedSize()
-        .help("Ещё")
+        .help(store.persistenceError ?? "Ещё")
+        .accessibilityLabel(store.persistenceError == nil ? "Ещё" : "Ошибка сохранения истории")
         .accessibilityLabel("Ещё")
     }
 

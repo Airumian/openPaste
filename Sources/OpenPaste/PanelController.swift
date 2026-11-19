@@ -3,27 +3,52 @@ import SwiftUI
 
 @Observable
 final class PanelState {
-    var query = "" { didSet { tabbedToCards = false } }
-    var selection = 0 { didSet { anchor = nil } }  // any plain move collapses a multi-selection
+    var query = "" {
+        didSet {
+            tabbedToCards = false
+            if query != oldValue { select(nil) }
+        }
+    }
+    private(set) var cursor: UUID?
+    private var anchor: UUID?
+    private var selection: Set<UUID> = []
     var deletionSelection: UUID?
-    /// Far end of a Shift+arrow / ⌘A range; nil when a single card is selected.
-    var anchor: Int?
-    /// Tab moved keyboard focus from the search field onto the cards; the next Tab goes back to search.
     var tabbedToCards = false
-    var selectedRange: ClosedRange<Int> {
-        guard let anchor else { return selection...selection }
-        return min(anchor, selection)...max(anchor, selection)
+
+    func select(_ id: UUID?) {
+        cursor = id
+        anchor = nil
+        selection = id.map { [$0] } ?? []
     }
 
-    /// Moves the cursor while keeping (or starting) the range from the current anchor.
-    func extendSelection(to index: Int) {
-        let start = anchor ?? selection
-        selection = index
-        anchor = start
+    func selectedIDs(in clips: [Clip]) -> Set<UUID> {
+        if cursor != nil { return selection }
+        return clips.first.map { [$0.id] } ?? []
+    }
+
+    func cursorIndex(in clips: [Clip]) -> Int? {
+        guard let cursor else { return clips.indices.first }
+        return clips.firstIndex { $0.id == cursor }
+    }
+
+    func extendSelection(to index: Int, in clips: [Clip]) {
+        guard clips.indices.contains(index) else { return }
+        let start =
+            anchor.flatMap { id in clips.firstIndex { $0.id == id } }
+            ?? cursorIndex(in: clips) ?? index
+        anchor = clips[start].id
+        cursor = clips[index].id
+        selection = Set(clips[min(start, index)...max(start, index)].map(\.id))
+    }
+
+    func selectAll(in clips: [Clip]) {
+        cursor = clips.first?.id
+        anchor = clips.last?.id
+        selection = Set(clips.map(\.id))
     }
     var shownAt = Date()
     var isVisible = false
-    var board: UUID?  // nil = clipboard history tab
+    var board: UUID? { didSet { if board != oldValue { select(nil) } } }  // nil = history
     var searchExpanded = false { didSet { tabbedToCards = false } }  // search field opened via the magnifier (it also shows whenever the query is non-empty)
     var searchFocusRequest = Date()  // bumped by ⌘F to move keyboard focus into the search field
     var renamingClip: UUID?  // card whose title is being edited inline
@@ -117,7 +142,6 @@ final class PanelController {
 
         store.pruneExpired()
         state.query = ""
-        state.selection = 0
         state.boardEditor = nil
         state.renamingClip = nil
         state.searchExpanded = false
@@ -125,6 +149,7 @@ final class PanelController {
         if let b = state.board, !store.pinboards.contains(where: { $0.id == b }) {
             state.board = nil
         }
+        state.select(state.visibleClips(store).first?.id)
         state.shownAt = Date()
         panel.makeKeyAndOrderFront(nil)
         withAnimation(.easeOut(duration: 0.12)) { state.isVisible = true }
@@ -168,9 +193,10 @@ final class PanelController {
             return false
         }
         let clips = state.visibleClips(store)
+        let index = state.cursorIndex(in: clips)
         if let n = shortcuts.pinboardNumber(for: e) {
-            if store.pinboards.indices.contains(n - 1), clips.indices.contains(state.selection) {
-                pin(clips[state.selection], to: store.pinboards[n - 1])
+            if store.pinboards.indices.contains(n - 1), let index {
+                pin(clips[index], to: store.pinboards[n - 1])
             }
             return true
         }
@@ -180,22 +206,24 @@ final class PanelController {
         switch action {
         case .previousBoard: moveBoard(-1)
         case .nextBoard: moveBoard(+1)
-        case .previousClip: state.selection = max(state.selection - 1, 0)
-        case .nextClip: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
-        case .extendPrevious: state.extendSelection(to: max(state.selection - 1, 0))
+        case .previousClip:
+            if !clips.isEmpty { state.select(clips[max((index ?? 1) - 1, 0)].id) }
+        case .nextClip:
+            if !clips.isEmpty { state.select(clips[min((index ?? -1) + 1, clips.count - 1)].id) }
+        case .extendPrevious:
+            state.extendSelection(to: max((index ?? 1) - 1, 0), in: clips)
         case .extendNext:
-            state.extendSelection(to: min(state.selection + 1, max(clips.count - 1, 0)))
+            state.extendSelection(to: min((index ?? -1) + 1, clips.count - 1), in: clips)
         case .tabToCards:
-            guard state.searchExpanded || !state.query.isEmpty else { return false }  // no search: Tab works as usual
-            if !state.tabbedToCards { state.selection = 0 }
-            state.tabbedToCards.toggle()  // Tab flips between the search field and the first card
+            guard state.searchExpanded || !state.query.isEmpty else { return false }
+            if !state.tabbedToCards { state.select(nil) }
+            state.tabbedToCards.toggle()
         case .selectAll:
-            // Cursor on the first card, anchor on the last: the list doesn't scroll to the end.
-            state.selection = 0
-            state.anchor = max(clips.count - 1, 0)
-        case .paste: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
+            state.selectAll(in: clips)
+        case .paste:
+            if let index { paste(clips[index]) }
         case .edit:
-            if clips.indices.contains(state.selection) { edit(clips[state.selection]) }
+            if let index { edit(clips[index]) }
         case .close where !state.query.isEmpty || state.searchExpanded:
             // First Esc leaves search (clears and collapses it); the next one closes the panel.
             state.query = ""
@@ -207,22 +235,21 @@ final class PanelController {
         case .delete where !state.query.isEmpty:  // Clear the search before deleting cards, like a text field.
             state.query = ""
         case .delete, .deleteWithoutSearch:
-            let range = state.selectedRange
-            guard state.deletionSelection == nil, clips.indices.contains(range.lowerBound),
-                clips.indices.contains(range.upperBound)
-            else { return true }
-            if range.lowerBound == range.upperBound {
-                delete(clips[range.lowerBound])
-            } else {
+            guard state.deletionSelection == nil else { return true }
+            let ids = state.selectedIDs(in: clips)
+            let selected = clips.filter { ids.contains($0.id) }
+            if selected.count == 1, let clip = selected.first {
+                delete(clip)
+            } else if let first = clips.firstIndex(where: { ids.contains($0.id) }) {
                 let replacement =
-                    range.upperBound + 1 < clips.count
-                    ? clips[range.upperBound + 1].id : clips.prefix(range.lowerBound).last?.id
-                remove(Array(clips[range]), selecting: replacement)
+                    clips[first...].first { !ids.contains($0.id) }
+                    ?? clips.prefix(first).last
+                remove(selected, selecting: replacement?.id)
             }
         case .undoDelete:
             if let restored = store.undoDelete() {
-                state.board = restored.pinboardID  // jump to the tab it came from
-                state.selection = state.visibleClips(store).firstIndex { $0.id == restored.id } ?? 0
+                state.board = restored.pinboardID
+                state.select(restored.id)
             }
         case .togglePanel: return false  // handled by Carbon, not the local event monitor
         }
@@ -250,10 +277,8 @@ final class PanelController {
                     guard let self else { return }
                     self.clipEditor = nil
                     self.show()
-                    if let index = self.state.visibleClips(self.store).firstIndex(where: {
-                        $0.id == clip.id
-                    }) {
-                        self.state.selection = index
+                    if self.state.visibleClips(self.store).contains(where: { $0.id == clip.id }) {
+                        self.state.select(clip.id)
                     }
                 }
             )
@@ -285,11 +310,14 @@ final class PanelController {
     private func delete(_ clip: Clip) {
         guard state.deletionSelection == nil else { return }
         let clips = state.visibleClips(store)
-        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-            let index = clips.firstIndex(where: { $0.id == clip.id }),
-            state.selectedRange.contains(index), clips.count > 1
+        if let index = clips.firstIndex(where: { $0.id == clip.id }),
+            state.selectedIDs(in: clips).contains(clip.id), clips.count > 1
         {
             let replacement = clips[index + 1 < clips.count ? index + 1 : index - 1].id
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                remove([clip], selecting: replacement)
+                return
+            }
             state.deletionSelection = replacement
             // Render the replacement's outline at its old position before shifting the row.
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(20)) { [weak self] in
@@ -307,9 +335,9 @@ final class PanelController {
         withAnimation(animation) {
             store.delete(selection)
             let clips = state.visibleClips(store)
-            state.selection =
-                replacement.flatMap { id in clips.firstIndex { $0.id == id } }
-                ?? min(state.selection, max(clips.count - 1, 0))
+            let remaining = Set(clips.map(\.id))
+            state.select(
+                [replacement, state.cursor].compactMap { $0 }.first { remaining.contains($0) })
             state.deletionSelection = nil
         }
     }
@@ -324,6 +352,6 @@ final class PanelController {
     private func switchBoard(to board: UUID?) {
         // No withAnimation here: it animated the whole card list too, making it flicker on every switch.
         state.board = board
-        state.selection = 0
+        state.select(state.visibleClips(store).first?.id)
     }
 }
