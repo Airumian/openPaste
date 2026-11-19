@@ -7,7 +7,9 @@ struct OpenPasteApp: App {
 
     var body: some Scene {
         MenuBarExtra("OpenPaste", systemImage: "doc.on.clipboard") {
-            Button("Показать историю  ⇧⌘V") { delegate.panel.toggle() }
+            Button("Показать историю" + (delegate.shortcuts[.togglePanel].map { "  " + $0.display } ?? "")) {
+                delegate.panel.toggle()
+            }
             Button("Настройки…") { delegate.showSettings() }.keyboardShortcut(",")
             Divider()
             Button("Выход") { NSApp.terminate(nil) }.keyboardShortcut("q")
@@ -15,9 +17,11 @@ struct OpenPasteApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = ClipStore()
-    lazy var panel = PanelController(store: store)
+    let shortcuts = ShortcutStore()
+    lazy var panel = PanelController(store: store, shortcuts: shortcuts)
     private var hotKey: HotKey?
     private var settingsWindow: NSWindow?
 
@@ -25,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)  // no Dock icon
         store.start()
         hotKey = HotKey { [weak self] in self?.panel.toggle() }
+        shortcuts.applyGlobalShortcut = { [weak self] in self?.hotKey?.setShortcut($0) }
+        shortcuts.recordingChanged = { [weak self] in self?.hotKey?.setSuspended($0) }
+        shortcuts.errorMessage = hotKey?.setShortcut(shortcuts[.togglePanel])
         Paster.requestAccess()
     }
 
@@ -32,9 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentViewController: NSHostingController(rootView: SettingsView(store: store)))
+                contentViewController: NSHostingController(rootView: SettingsView(store: store, shortcuts: shortcuts)))
             window.title = "Настройки OpenPaste"
-            window.styleMask = [.titled, .closable]
+            window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            window.toolbar = NSToolbar(identifier: "OpenPasteSettings")
+            window.toolbarStyle = .unified
+            window.setContentSize(SettingsLayout.windowSize)
             window.isReleasedWhenClosed = false
             window.center()
             settingsWindow = window
