@@ -149,8 +149,9 @@ struct PanelView: View {
             thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil
         )
         .id(clip.id)
-        .onTapGesture(count: 2) { onPaste(clip) }
+        // Single click selects at once; a sequential double-tap gesture would delay it by the double-click interval.
         .onTapGesture { state.selection = i }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { onPaste(clip) })
         .onDrag {
             state.dragging = clip
             // Real content, so the card can also be dropped into other apps.
