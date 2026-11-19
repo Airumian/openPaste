@@ -72,7 +72,7 @@ struct PanelView: View {
 
     private var panelContent: some View {
         let clips = state.visibleClips(store)
-        return VStack(spacing: 8) {
+        return VStack(spacing: 12) {
             HStack(spacing: 10) {
                 // Mirrors the "⋯" button so the header group stays centered.
                 Color.clear.frame(width: 34, height: 34)
@@ -119,7 +119,7 @@ struct PanelView: View {
                 .overlay { searchField }
                 moreMenu
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 13)
             .frame(height: 36)
 
             if clips.isEmpty {
@@ -157,7 +157,7 @@ struct PanelView: View {
                 }
             }
         }
-        .padding(.vertical, 16)
+        .padding(.top, 12).padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .liquidGlass(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onChange(of: state.query) { _, _ in state.selection = 0 }
@@ -575,7 +575,7 @@ struct CardView: View {
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: 50, maxHeight: 50, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
         .background(app.color)
         .overlay(alignment: .topTrailing) {
             if let icon = app.icon {
