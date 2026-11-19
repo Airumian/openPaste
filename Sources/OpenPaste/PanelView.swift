@@ -117,6 +117,7 @@ struct PanelView: View {
                         LazyHStack(spacing: 24) {
                             ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
                                 card(clip, index: i)
+                                    .transition(CardRemoval())
                             }
                         }
                         .padding(.horizontal, 24)
@@ -151,7 +152,9 @@ struct PanelView: View {
 
     private func card(_ clip: Clip, index i: Int) -> some View {
         CardView(
-            clip: clip, index: i + 1, selected: state.selectedRange.contains(i),
+            clip: clip, index: i + 1,
+            selected: state.deletionSelection.map { $0 == clip.id }
+                ?? state.selectedRange.contains(i),
             now: state.shownAt,
             thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil,
             titleDraft: state.renamingClip == clip.id ? $clipTitleDraft : nil,
@@ -551,8 +554,20 @@ struct PanelView: View {
     }
 }
 
+extension EnvironmentValues {
+    @Entry fileprivate var cardIsRemoving = false
+}
+
+private struct CardRemoval: Transition {
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        content
+            .environment(\.cardIsRemoving, phase == .didDisappear)
+            .opacity(phase == .didDisappear ? 0 : 1)
+    }
+}
+
 struct CardView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.cardIsRemoving) private var isRemoving
     let clip: Clip
     let index: Int
     let selected: Bool
@@ -581,14 +596,14 @@ struct CardView: View {
         .frame(width: 232, height: 232)
         .background(clip.kind == .link ? Color(white: 0.13) : Color(white: 0.08))
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
-        .overlay(
-            // Ring sits outside the card, as in Paste: 240 pt outer edge around a 232 pt card.
-            RoundedRectangle(cornerRadius: Self.radius + 4, style: .continuous)
-                .strokeBorder(Color.accentColor, lineWidth: 4)
-                .padding(-4)
-                .opacity(selected ? 1 : 0)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
-        )
+        .overlay {
+            if selected && !isRemoving {
+                RoundedRectangle(cornerRadius: Self.radius + 4, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 4)
+                    .padding(-4)
+                    .transition(.identity)
+            }
+        }
         .environment(\.colorScheme, .dark)
     }
 

@@ -5,6 +5,7 @@ import SwiftUI
 final class PanelState {
     var query = "" { didSet { tabbedToCards = false } }
     var selection = 0 { didSet { anchor = nil } }  // any plain move collapses a multi-selection
+    var deletionSelection: UUID?
     /// Far end of a Shift+arrow / ⌘A range; nil when a single card is selected.
     var anchor: Int?
     /// Tab moved keyboard focus from the search field onto the cards; the next Tab goes back to search.
@@ -228,8 +229,35 @@ final class PanelController {
     }
 
     private func delete(_ clip: Clip) {
-        store.delete(clip)
-        state.selection = min(state.selection, max(state.visibleClips(store).count - 1, 0))
+        guard state.deletionSelection == nil else { return }
+        let clips = state.visibleClips(store)
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            let index = clips.firstIndex(where: { $0.id == clip.id }),
+            state.selectedRange.contains(index), clips.count > 1
+        {
+            let replacement = clips[index + 1 < clips.count ? index + 1 : index - 1].id
+            state.deletionSelection = replacement
+            // Render the replacement's outline at its old position before shifting the row.
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(20)) { [weak self] in
+                self?.remove(clip, selecting: replacement)
+            }
+            return
+        }
+        remove(clip)
+    }
+
+    private func remove(_ clip: Clip, selecting replacement: UUID? = nil) {
+        let animation: Animation? =
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? nil : .easeOut(duration: 0.23)
+        withAnimation(animation) {
+            store.delete(clip)
+            let clips = state.visibleClips(store)
+            state.selection =
+                replacement.flatMap { id in clips.firstIndex { $0.id == id } }
+                ?? min(state.selection, max(clips.count - 1, 0))
+            state.deletionSelection = nil
+        }
     }
 
     /// History tab, then pinboards in order; stops at the ends.
