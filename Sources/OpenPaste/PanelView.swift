@@ -139,7 +139,7 @@ struct PanelView: View {
                                 card(clip, index: i)
                             }
                         }
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, 24)
                     }
                     .scrollIndicators(.hidden)
                     .onChange(of: state.selection) { _, i in
