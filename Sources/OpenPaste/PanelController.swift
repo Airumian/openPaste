@@ -25,20 +25,24 @@ final class PastePanel: NSPanel {
 }
 
 /// Bottom-of-screen panel. Non-activating, so the app you were typing in stays frontmost and receives ⌘V.
+@MainActor
 final class PanelController {
     let store: ClipStore
+    let shortcuts: ShortcutStore
     let state = PanelState()
     private let panel: PastePanel
     private var monitor: Any?
 
-    init(store: ClipStore) {
+    init(store: ClipStore, shortcuts: ShortcutStore) {
         self.store = store
+        self.shortcuts = shortcuts
         panel = PastePanel(
             contentRect: .zero,
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered, defer: false)
-        panel.level = .popUpMenu
         panel.isFloatingPanel = true
+        // isFloatingPanel resets the window level; set it afterward to stay above the Dock.
+        panel.level = .popUpMenu
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false  // the glass draws its own rim and shadow; the window shadow added a second, mismatched border
@@ -46,7 +50,7 @@ final class PanelController {
 
         let host = NSHostingView(
             rootView: PanelView(
-                store: store, state: state,
+                store: store, shortcuts: shortcuts, state: state,
                 onPaste: { [unowned self] in paste($0) },
                 onDelete: { [unowned self] in delete($0) },
                 onSwitchBoard: { [unowned self] in switchBoard(to: $0) },
@@ -57,7 +61,7 @@ final class PanelController {
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
         ) { [weak self] _ in
-            self?.hide()
+            MainActor.assumeIsolated { self?.hide() }
         }
     }
 
@@ -91,7 +95,7 @@ final class PanelController {
         withAnimation(.spring(duration: 0.35, bounce: 0.12)) { state.isVisible = true }
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            guard let self else { return e }
+            guard let self, e.window === panel else { return e }
             return handle(e) ? nil : e
         }
     }
@@ -115,7 +119,7 @@ final class PanelController {
         }
     }
 
-    /// Arrow keys, Enter and Esc are taken here before the search field sees them; other keys go to search.
+    /// Assigned panel commands are handled before the search field; other keys go to search.
     private func handle(_ e: NSEvent) -> Bool {
         if state.boardEditor != nil || state.renamingClip != nil {  // a name field owns the keyboard
             if e.keyCode == 53 {
@@ -126,37 +130,33 @@ final class PanelController {
             return false
         }
         let clips = state.visibleClips(store)
-        let cmd = e.modifierFlags.contains(.command)
-        if cmd, let n = Self.digitKeys[Int(e.keyCode)] {  // ⌘1…⌘9: pin selected card to pinboard N
+        if let n = shortcuts.pinboardNumber(for: e) {
             if store.pinboards.indices.contains(n - 1), clips.indices.contains(state.selection) {
                 pin(clips[state.selection], to: store.pinboards[n - 1])
             }
             return true
         }
-        switch Int(e.keyCode) {
-        case 123 where cmd: moveBoard(-1)
-        case 124 where cmd: moveBoard(+1)
-        case 123: state.selection = max(state.selection - 1, 0)
-        case 124: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
-        case 36, 76: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
-        case 53: hide(animated: true)
-        // Plain ⌫ deletes the card only with an empty query; otherwise it edits the search text.
-        case 51 where cmd && !state.query.isEmpty:  // ⌘⌫ in a non-empty search clears it, like any text field
+        guard let action = shortcuts.action(for: e, searchIsEmpty: state.query.isEmpty) else { return false }
+        switch action {
+        case .previousBoard: moveBoard(-1)
+        case .nextBoard: moveBoard(+1)
+        case .previousClip: state.selection = max(state.selection - 1, 0)
+        case .nextClip: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
+        case .paste: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
+        case .close: hide(animated: true)
+        case .delete where !state.query.isEmpty:  // Clear the search before deleting cards, like a text field.
             state.query = ""
-        case 51 where cmd || state.query.isEmpty:
+        case .delete, .deleteWithoutSearch:
             if clips.indices.contains(state.selection) { delete(clips[state.selection]) }
-        case 6 where cmd:  // ⌘Z
+        case .undoDelete:
             if let restored = store.undoDelete() {
                 state.board = restored.pinboardID  // jump to the tab it came from
                 state.selection = state.visibleClips(store).firstIndex { $0.id == restored.id } ?? 0
             }
-        default: return false
+        case .togglePanel: return false  // handled by Carbon, not the local event monitor
         }
         return true
     }
-
-    /// Key codes of the 1…9 row on ANSI layout (layout-independent, so it works with Russian input too).
-    private static let digitKeys = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
 
     private func pin(_ clip: Clip, to board: Pinboard) {
         guard clip.pinboardID != board.id else { return }
@@ -181,7 +181,7 @@ final class PanelController {
         state.selection = min(state.selection, max(state.visibleClips(store).count - 1, 0))
     }
 
-    /// ⌘← / ⌘→: history tab, then pinboards in order; stops at the ends.
+    /// History tab, then pinboards in order; stops at the ends.
     private func moveBoard(_ delta: Int) {
         let tabs: [UUID?] = [nil] + store.pinboards.map(\.id)
         let i = tabs.firstIndex(of: state.board) ?? 0

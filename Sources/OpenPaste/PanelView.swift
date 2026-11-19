@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PanelView: View {
     let store: ClipStore
+    let shortcuts: ShortcutStore
     @Bindable var state: PanelState
     let onPaste: (Clip) -> Void
     let onDelete: (Clip) -> Void
@@ -105,7 +106,7 @@ struct PanelView: View {
                         ? "Ничего не найдено"
                         : state.board == nil
                             ? "История пуста — скопируйте что-нибудь"
-                            : "Пинборд пуст — перетащите сюда карточку, нажмите ⌘1…9 или правый клик → «Закрепить в»"
+                            : "Пинборд пуст — перетащите сюда карточку или выберите правый клик → «Закрепить в»"
                 )
                 .foregroundStyle(.secondary)
                 .frame(maxHeight: .infinity)
@@ -181,10 +182,10 @@ struct PanelView: View {
                 Menu("Закрепить в") {
                     ForEach(Array(store.pinboards.enumerated()), id: \.element.id) { n, board in
                         if board.id != clip.pinboardID {
-                            if n < 9 {
+                            if n < 9, shortcuts.pinboardModifier != .disabled {
                                 Button(board.name) { onPin(clip, board) }
                                     .keyboardShortcut(
-                                        KeyEquivalent(Character("\(n + 1)")), modifiers: .command)
+                                        KeyEquivalent(Character("\(n + 1)")), modifiers: shortcuts.pinboardModifier.eventModifiers)
                             } else {
                                 Button(board.name) { onPin(clip, board) }
                             }
@@ -220,7 +221,8 @@ struct PanelView: View {
             onPin(clip, board)
             return true
         }
-        .help(i < 9 ? "⌘\(i + 1) закрепляет выбранную карточку сюда" : "")
+        .help(i < 9 && shortcuts.pinboardModifier != .disabled
+              ? "\(shortcuts.pinboardModifier.symbol)\(i + 1) закрепляет выбранную карточку сюда" : "")
         .contextMenu {
             Button("Переименовать") { startRename(board) }
             Button("Сдвинуть влево") { store.movePinboard(board.id, by: -1) }
