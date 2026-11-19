@@ -36,8 +36,9 @@ final class PanelController {
             contentRect: .zero,
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered, defer: false)
-        panel.level = .popUpMenu
         panel.isFloatingPanel = true
+        // isFloatingPanel resets the window level; set it afterward to stay above the Dock.
+        panel.level = .popUpMenu
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
