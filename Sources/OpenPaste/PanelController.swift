@@ -3,12 +3,28 @@ import SwiftUI
 
 @Observable
 final class PanelState {
-    var query = ""
-    var selection = 0
+    var query = "" { didSet { tabbedToCards = false } }
+    var selection = 0 { didSet { anchor = nil } }  // any plain move collapses a multi-selection
+    /// Far end of a Shift+arrow / ⌘A range; nil when a single card is selected.
+    var anchor: Int?
+    /// Tab moved keyboard focus from the search field onto the cards; the next Tab goes back to search.
+    var tabbedToCards = false
+    var selectedRange: ClosedRange<Int> {
+        guard let anchor else { return selection...selection }
+        return min(anchor, selection)...max(anchor, selection)
+    }
+
+    /// Moves the cursor while keeping (or starting) the range from the current anchor.
+    func extendSelection(to index: Int) {
+        let start = anchor ?? selection
+        selection = index
+        anchor = start
+    }
     var shownAt = Date()
     var isVisible = false
     var board: UUID?  // nil = clipboard history tab
-    var searchExpanded = false  // search field opened via the magnifier (it also shows whenever the query is non-empty)
+    var searchExpanded = false { didSet { tabbedToCards = false } }  // search field opened via the magnifier (it also shows whenever the query is non-empty)
+    var searchFocusRequest = Date()  // bumped by ⌘F to move keyboard focus into the search field
     var renamingClip: UUID?  // card whose title is being edited inline
     var boardEditor: BoardEditor?  // inline name field for a new or renamed pinboard
     var dragging: Clip?  // card being dragged onto a pinboard tab
@@ -87,11 +103,10 @@ final class PanelController {
         let f = screen.frame
         // The window spans the screen bottom; PanelView insets the glass inside it so the glass shadow
         // has transparent room instead of being cut off at the window's square corners.
-        panel.setFrame(
-            NSRect(
-                x: f.minX, y: f.minY, width: f.width,
-                height: 324 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
-            display: true)
+        let frame = NSRect(x: f.minX, y: f.minY, width: f.width, height: PanelView.windowHeight)
+        if panel.frame != frame {
+            panel.setFrame(frame, display: true)
+        }
 
         store.pruneExpired()
         state.query = ""
@@ -105,9 +120,7 @@ final class PanelController {
         }
         state.shownAt = Date()
         panel.makeKeyAndOrderFront(nil)
-        // Content is inserted under an animation, so PanelView's transition slides it up from the screen edge.
-        // Critically damped: no gesture momentum behind a hotkey, so no overshoot (Apple's default spring).
-        withAnimation(.spring(duration: 0.35, bounce: 0)) { state.isVisible = true }
+        withAnimation(.easeOut(duration: 0.12)) { state.isVisible = true }
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, e.window === panel else { return e }
@@ -128,7 +141,7 @@ final class PanelController {
         }
         let animationID = UUID()
         hideAnimationID = animationID
-        withAnimation(.spring(duration: 0.25, bounce: 0)) {  // mirrors the entrance spring
+        withAnimation(.easeOut(duration: 0.12)) {
             state.isVisible = false
         } completion: { [weak self] in
             guard let self, hideAnimationID == animationID else { return }
@@ -162,12 +175,26 @@ final class PanelController {
         case .nextBoard: moveBoard(+1)
         case .previousClip: state.selection = max(state.selection - 1, 0)
         case .nextClip: state.selection = min(state.selection + 1, max(clips.count - 1, 0))
+        case .extendPrevious: state.extendSelection(to: max(state.selection - 1, 0))
+        case .extendNext:
+            state.extendSelection(to: min(state.selection + 1, max(clips.count - 1, 0)))
+        case .tabToCards:
+            guard state.searchExpanded || !state.query.isEmpty else { return false }  // no search: Tab works as usual
+            if !state.tabbedToCards { state.selection = 0 }
+            state.tabbedToCards.toggle()  // Tab flips between the search field and the first card
+        case .selectAll:
+            // Cursor on the first card, anchor on the last: the list doesn't scroll to the end.
+            state.selection = 0
+            state.anchor = max(clips.count - 1, 0)
         case .paste: if clips.indices.contains(state.selection) { paste(clips[state.selection]) }
         case .close where !state.query.isEmpty || state.searchExpanded:
             // First Esc leaves search (clears and collapses it); the next one closes the panel.
             state.query = ""
             state.searchExpanded = false
         case .close: hide(animated: true)
+        case .search:
+            state.searchExpanded = true
+            state.searchFocusRequest = Date()  // refocus even if search is already open
         case .delete where !state.query.isEmpty:  // Clear the search before deleting cards, like a text field.
             state.query = ""
         case .delete, .deleteWithoutSearch:

@@ -49,19 +49,19 @@ struct PanelView: View {
         return image
     }
 
-    /// A hidden panel renders nothing, so copies made while it's closed don't rebuild the card list.
     /// Transparent margin around the glass inside the panel window: keeps the 8 pt gap to the screen edges
     /// and leaves room for the glass shadow, which would otherwise be clipped into gray corner wedges.
-    static let shadowRoom = EdgeInsets(top: 0, leading: 8, bottom: 8, trailing: 8)  // window 332 pt, as in Paste
+    static let shadowRoom = EdgeInsets(top: 0, leading: 8, bottom: 8, trailing: 8)
+    static let glassHeight: CGFloat = 324
+    private static let stripStart = "strip-start"
+    static let windowHeight = glassHeight + shadowRoom.top + shadowRoom.bottom  // 332 pt, as in Paste
 
     var body: some View {
-        ZStack {  // stable container, so inserting the content runs its transition
+        ZStack {
             if state.isVisible {
                 panelContent
                     .padding(Self.shadowRoom)
-                    .transition(
-                        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
-                    )
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom))
                     .onAppear {
                         DispatchQueue.main.async { focus = .search }
                     }
@@ -140,6 +140,7 @@ struct PanelView: View {
                             }
                         }
                         .padding(.horizontal, 24)
+                        .id(Self.stripStart)  // scrolling to the whole strip keeps its leading padding
                     }
                     .scrollIndicators(.hidden)
                     .onChange(of: state.selection) { _, i in
@@ -149,10 +150,10 @@ struct PanelView: View {
                         }
                     }
                     .onChange(of: state.shownAt) { _, _ in
-                        if let first = clips.first { proxy.scrollTo(first.id, anchor: .leading) }
+                        proxy.scrollTo(Self.stripStart, anchor: .leading)
                     }
                     .onChange(of: state.board) { _, _ in
-                        if let first = clips.first { proxy.scrollTo(first.id, anchor: .leading) }
+                        proxy.scrollTo(Self.stripStart, anchor: .leading)
                     }
                 }
             }
@@ -162,13 +163,15 @@ struct PanelView: View {
         .liquidGlass(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onChange(of: state.query) { _, _ in state.selection = 0 }
         .onChange(of: state.shownAt) { _, _ in focus = .search }
+        .onChange(of: state.searchFocusRequest) { _, _ in focus = .search }
+        .onChange(of: state.tabbedToCards) { _, onCards in focus = onCards ? nil : .search }
         .onChange(of: state.boardEditor) { _, editor in focus = editor == nil ? .search : .boardName
         }
     }
 
     private func card(_ clip: Clip, index i: Int) -> some View {
         CardView(
-            clip: clip, index: i + 1, selected: i == state.selection,
+            clip: clip, index: i + 1, selected: state.selectedRange.contains(i),
             now: state.shownAt,
             thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil,
             titleDraft: state.renamingClip == clip.id ? $clipTitleDraft : nil,

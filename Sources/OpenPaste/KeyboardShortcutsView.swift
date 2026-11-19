@@ -11,7 +11,9 @@ struct KeyboardShortcutsView: View {
     }
 
     private var errorPresented: Binding<Bool> {
-        Binding(get: { shortcuts.errorMessage != nil }, set: { if !$0 { shortcuts.errorMessage = nil } })
+        Binding(
+            get: { shortcuts.errorMessage != nil }, set: { if !$0 { shortcuts.errorMessage = nil } }
+        )
     }
 
     private var modifierSelection: Binding<PinboardModifier> {
@@ -21,7 +23,8 @@ struct KeyboardShortcutsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             ShortcutGroupView(actions: [.togglePanel], shortcuts: shortcuts, recorder: recorder)
-            ShortcutGroupView(actions: [.nextBoard, .previousBoard], shortcuts: shortcuts, recorder: recorder)
+            ShortcutGroupView(
+                actions: [.nextBoard, .previousBoard], shortcuts: shortcuts, recorder: recorder)
 
             SettingsCard {
                 HStack(spacing: 8) {
@@ -39,16 +42,26 @@ struct KeyboardShortcutsView: View {
                 .frame(height: 36)
             }
 
-            ShortcutGroupView(actions: [.previousClip, .nextClip, .paste, .close], shortcuts: shortcuts, recorder: recorder)
-            ShortcutGroupView(actions: [.delete, .deleteWithoutSearch, .undoDelete], shortcuts: shortcuts, recorder: recorder)
+            ShortcutGroupView(
+                actions: [
+                    .previousClip, .nextClip, .extendPrevious, .extendNext, .selectAll, .paste,
+                    .search, .tabToCards, .close,
+                ], shortcuts: shortcuts,
+                recorder: recorder)
+            ShortcutGroupView(
+                actions: [.delete, .deleteWithoutSearch, .undoDelete], shortcuts: shortcuts,
+                recorder: recorder)
 
             HStack {
                 Spacer(minLength: 0)
-                Button { confirmReset = true } label: {
+                Button {
+                    confirmReset = true
+                } label: {
                     Text("Сбросить сочетания по умолчанию…")
                         .padding(.horizontal, 12)
                         .padding(.vertical, 4)
-                        .background(Color(nsColor: .quaternaryLabelColor), in: .rect(cornerRadius: 6))
+                        .background(
+                            Color(nsColor: .quaternaryLabelColor), in: .rect(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
                 .confirmationDialog("Сбросить сочетания клавиш?", isPresented: $confirmReset) {
@@ -62,12 +75,14 @@ struct KeyboardShortcutsView: View {
                 }
             }
 
-            Text(recorder.action == nil
-                 ? "Нажмите на сочетание, чтобы изменить его. Команды карточек работают при открытой панели."
-                 : "Запись. Esc — отмена.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, SettingsLayout.cardInset)
+            Text(
+                recorder.action == nil
+                    ? "Нажмите на сочетание, чтобы изменить его. Команды карточек работают при открытой панели."
+                    : "Запись. Esc — отмена."
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, SettingsLayout.cardInset)
         }
         .onDisappear { recorder.stop() }
         .alert("Сочетание недоступно", isPresented: errorPresented) {
