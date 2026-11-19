@@ -29,26 +29,6 @@ struct PanelView: View {
         boardColors[board.color % boardColors.count].color
     }
 
-    /// Menus render SF Symbols as monochrome templates, so color swatches are drawn as plain images.
-    /// The palette menu scales the image up, so the dot is drawn inset to land at Finder-tag size;
-    /// the selected color gets a ring, since the default selection effect is off (.custom).
-    private static func swatch(_ color: Color, selected: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-            NSColor(color).setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 3, dy: 3)).fill()
-            if selected {
-                // Dark halo around the selected dot, as in the Finder-style tag picker.
-                let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 1.25, dy: 1.25))
-                ring.lineWidth = 2.5
-                NSColor.black.withAlphaComponent(0.75).setStroke()
-                ring.stroke()
-            }
-            return true
-        }
-        image.isTemplate = false
-        return image
-    }
-
     /// Transparent margin around the glass inside the panel window: keeps the 8 pt gap to the screen edges
     /// and leaves room for the glass shadow, which would otherwise be clipped into gray corner wedges.
     static let shadowRoom = EdgeInsets(top: 0, leading: 8, bottom: 8, trailing: 8)
@@ -279,44 +259,101 @@ struct PanelView: View {
                 ? "\(shortcuts.pinboardModifier.symbol)\(i + 1) закрепляет выбранную карточку сюда"
                 : ""
         )
-        .contextMenu {
-            Button("Переименовать") { startRename(board) }
-            Button("Сдвинуть влево") {
-                withAnimation(tabAnimation) { store.movePinboard(board.id, by: -1) }
+        .overlay {
+            PinboardMenu(
+                selectedColor: board.color % Self.boardColors.count,
+                rename: { startRename(board) },
+                delete: {
+                    if state.board == board.id { onSwitchBoard(nil) }
+                    withAnimation(tabAnimation) { store.deletePinboard(board) }
+                },
+                selectColor: { store.setPinboardColor(board.id, to: $0) }
+            )
+        }
+    }
+
+    private struct PinboardMenu: NSViewRepresentable {
+        let selectedColor: Int
+        let rename: () -> Void
+        let delete: () -> Void
+        let selectColor: (Int) -> Void
+
+        func makeNSView(context: Context) -> MenuView { MenuView() }
+
+        func updateNSView(_ view: MenuView, context: Context) {
+            view.configuration = self
+        }
+
+        final class MenuView: NSView {
+            var configuration: PinboardMenu?
+
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                // Let SwiftUI handle normal clicks and dragging on the tab.
+                guard let event = NSApp.currentEvent,
+                    event.type == .rightMouseDown
+                        || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+                else { return nil }
+                return super.hitTest(point)
             }
-            .disabled(i == 0)
-            Button("Сдвинуть вправо") {
-                withAnimation(tabAnimation) { store.movePinboard(board.id, by: +1) }
+
+            override func menu(for event: NSEvent) -> NSMenu? {
+                guard let configuration else { return nil }
+                let menu = NSMenu()
+                let rename = menu.addItem(
+                    withTitle: "Переименовать", action: #selector(renameBoard), keyEquivalent: "")
+                rename.target = self
+                let delete = menu.addItem(
+                    withTitle: "Удалить", action: #selector(deleteBoard), keyEquivalent: "")
+                delete.target = self
+                menu.addItem(.separator())
+
+                let paletteItem = NSMenuItem()
+                paletteItem.view = makePalette(selectedColor: configuration.selectedColor)
+                menu.addItem(paletteItem)
+                return menu
             }
-            .disabled(i == store.pinboards.count - 1)
-            Button("Удалить", role: .destructive) {
-                if state.board == board.id { onSwitchBoard(nil) }
-                // Animated, so the tabs to the right slide left into the gap instead of jumping.
-                withAnimation(tabAnimation) { store.deletePinboard(board) }
-            }
-            Divider()
-            // .palette renders the options as one row of swatches, like Finder tags.
-            Picker(
-                "Цвет",
-                selection: Binding(
-                    get: { board.color % Self.boardColors.count },
-                    set: { store.setPinboardColor(board.id, to: $0) })
-            ) {
-                ForEach(Self.paletteOrder, id: \.self) { i in
-                    Label {
-                        Text(Self.boardColors[i].name)
-                    } icon: {
-                        Image(
-                            nsImage: Self.swatch(
-                                Self.boardColors[i].color,
-                                selected: i == board.color % Self.boardColors.count))
+
+            private func makePalette(selectedColor: Int) -> NSView {
+                let swatchWidth: CGFloat = 25
+                let inset: CGFloat = 10
+                let frame = NSRect(x: 0, y: 0, width: 2 * inset + 8 * swatchWidth, height: 34)
+                let row = NSView(frame: frame)
+                for (index, colorIndex) in PanelView.paletteOrder.enumerated() {
+                    let color = PanelView.boardColors[colorIndex]
+                    let selected = colorIndex == selectedColor
+                    let image = NSImage(size: NSSize(width: 22, height: 22), flipped: false) {
+                        rect in
+                        if selected {
+                            NSColor.labelColor.withAlphaComponent(0.25).setFill()
+                            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+                        }
+                        NSColor(color.color).setFill()
+                        NSBezierPath(ovalIn: rect.insetBy(dx: 4, dy: 4)).fill()
+                        return true
                     }
-                    .tag(i)
+                    let button = NSButton(
+                        image: image, target: self, action: #selector(chooseColor(_:)))
+                    button.frame = NSRect(
+                        x: inset + CGFloat(index) * swatchWidth, y: 3,
+                        width: swatchWidth, height: 28)
+                    button.isBordered = false
+                    button.imagePosition = .imageOnly
+                    button.tag = colorIndex
+                    button.toolTip = color.name
+                    button.setAccessibilityLabel(color.name)
+                    button.setAccessibilityValue(selected ? "Выбран" : "Не выбран")
+                    row.addSubview(button)
                 }
+                return row
             }
-            .pickerStyle(.palette)
-            .paletteSelectionEffect(.custom)
-            .labelsHidden()
+
+            @objc private func chooseColor(_ sender: NSButton) {
+                sender.superview?.enclosingMenuItem?.menu?.cancelTracking()
+                configuration?.selectColor(sender.tag)
+            }
+
+            @objc private func renameBoard() { configuration?.rename() }
+            @objc private func deleteBoard() { configuration?.delete() }
         }
     }
 
