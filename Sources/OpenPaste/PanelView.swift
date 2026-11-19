@@ -37,9 +37,15 @@ struct PanelView: View {
     }
 
     /// A hidden panel renders nothing, so copies made while it's closed don't rebuild the card list.
+    /// Transparent margin around the glass inside the panel window: keeps the 8 pt gap to the screen edges
+    /// and leaves room for the glass shadow, which would otherwise be clipped into gray corner wedges.
+    static let shadowRoom = EdgeInsets(top: 24, leading: 8, bottom: 8, trailing: 8)
+
     var body: some View {
         if state.isVisible {
-            panelContent.onAppear { DispatchQueue.main.async { focus = .search } }
+            panelContent
+                .padding(Self.shadowRoom)
+                .onAppear { DispatchQueue.main.async { focus = .search } }
         }
     }
 

@@ -40,7 +40,7 @@ final class PanelController {
         panel.isFloatingPanel = true
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false  // the glass draws its own rim and shadow; the window shadow added a second, mismatched border
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let host = NSHostingView(
@@ -66,8 +66,13 @@ final class PanelController {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
         let f = screen.frame
+        // The window spans the screen bottom; PanelView insets the glass inside it so the glass shadow
+        // has transparent room instead of being cut off at the window's square corners.
         panel.setFrame(
-            NSRect(x: f.minX + 8, y: f.minY + 8, width: f.width - 16, height: 320), display: true)
+            NSRect(
+                x: f.minX, y: f.minY, width: f.width,
+                height: 320 + PanelView.shadowRoom.top + PanelView.shadowRoom.bottom),
+            display: true)
 
         store.pruneExpired()
         state.query = ""
@@ -143,6 +148,12 @@ final class PanelController {
     private func paste(_ clip: Clip) {
         store.copy(clip)
         hide()
+        // Without Accessibility the synthetic ⌘V is silently dropped; ask instead of failing invisibly.
+        // The clip is already on the clipboard, so a manual ⌘V still works meanwhile.
+        guard AXIsProcessTrusted() else {
+            Paster.requestAccess()
+            return
+        }
         // Give the target app a moment to become key again before the synthetic ⌘V.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { Paster.sendCmdV() }
     }
