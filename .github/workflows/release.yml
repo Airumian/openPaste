@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # needed to create the release
+
+jobs:
+  release:
+    runs-on: macos-26 # Liquid Glass API needs the macOS 26 SDK
+    env:
+      # Signing + notarization run only when the Developer ID secrets exist; otherwise the build is ad-hoc signed.
+      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
+      DMG: OpenPaste-${{ github.ref_name }}.dmg
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - run: ./build.sh # picks up the Developer ID identity from the keychain when imported above
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: Build DMG
+        run: ./dmg.sh && mv OpenPaste.dmg "$DMG"
+
+      - name: Notarize DMG
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          codesign --sign "Developer ID Application" --timestamp "$DMG"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$DMG" # fails if Apple rejected the build, so a bad release is never published
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="## Установка
+          1. Скачайте \`$DMG\` ниже, откройте и перетащите OpenPaste в «Программы».
+          2. Разрешите доступ: Системные настройки → Конфиденциальность и безопасность → Универсальный доступ.
+
+          Требуется macOS 14 или новее."
+          if [ "$HAS_SIGNING" != true ]; then
+            NOTES="$NOTES
+
+          **Сборка не нотаризована.** При первом запуске откройте приложение через правый клик → «Открыть» или выполните
+          \`xattr -dr com.apple.quarantine /Applications/OpenPaste.app\`"
+          fi
+          gh release create "$GITHUB_REF_NAME" "$DMG" --generate-notes --notes "$NOTES"
