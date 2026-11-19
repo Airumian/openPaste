@@ -79,6 +79,37 @@ final class ShortcutTests: XCTestCase {
         }
     }
 
+    func testDeletingLastSearchCharacterKeepsSearchOpen() {
+        let state = PanelState()
+        XCTAssertFalse(state.searchExpanded)
+        state.query = "a"
+        state.query.removeLast()
+        XCTAssertTrue(state.searchExpanded)
+
+        withStore { store, _ in
+            XCTAssertNil(store.action(for: event(51), searchIsEmpty: !state.searchExpanded))
+        }
+    }
+
+    func testTabSwitchesBetweenCardsAndSearch() {
+        for query in ["", "a"] {
+            let state = PanelState()
+            let firstClipID = UUID()
+            state.query = query
+
+            state.switchSearchFocus(firstClipID: firstClipID)
+            state.query = query
+            XCTAssertTrue(state.tabbedToCards)
+            XCTAssertEqual(state.cursor, firstClipID)
+            XCTAssertFalse(state.searchFieldVisible)
+
+            state.switchSearchFocus(firstClipID: firstClipID)
+            XCTAssertFalse(state.tabbedToCards)
+            XCTAssertTrue(state.searchFieldVisible)
+            XCTAssertEqual(state.query, query)
+        }
+    }
+
     func testShiftArrowsAndCommandAMapToSelection() async {
         withStore { store, _ in
             XCTAssertEqual(

@@ -5,8 +5,10 @@ import SwiftUI
 final class PanelState {
     var query = "" {
         didSet {
+            guard query != oldValue else { return }
+            if !query.isEmpty { searchExpanded = true }
             tabbedToCards = false
-            if query != oldValue { select(nil) }
+            select(nil)
         }
     }
     private(set) var cursor: UUID?
@@ -49,7 +51,17 @@ final class PanelState {
     var shownAt = Date()
     var isVisible = false
     var board: UUID? { didSet { if board != oldValue { select(nil) } } }  // nil = history
-    var searchExpanded = false { didSet { tabbedToCards = false } }  // search field opened via the magnifier (it also shows whenever the query is non-empty)
+    var searchExpanded = false { didSet { tabbedToCards = false } }
+    var searchFieldVisible: Bool { searchExpanded && !tabbedToCards }
+
+    func switchSearchFocus(firstClipID: UUID?) {
+        if tabbedToCards {
+            searchExpanded = true
+        } else {
+            select(firstClipID)
+            tabbedToCards = true
+        }
+    }
     var searchFocusRequest = Date()  // bumped by ⌘F to move keyboard focus into the search field
     var renamingClip: UUID?  // card whose title is being edited inline
     var boardEditor: BoardEditor?  // inline name field for a new or renamed pinboard
@@ -200,7 +212,7 @@ final class PanelController {
             }
             return true
         }
-        guard let action = shortcuts.action(for: e, searchIsEmpty: state.query.isEmpty) else {
+        guard let action = shortcuts.action(for: e, searchIsEmpty: !state.searchExpanded) else {
             return false
         }
         switch action {
@@ -215,9 +227,7 @@ final class PanelController {
         case .extendNext:
             state.extendSelection(to: min((index ?? -1) + 1, clips.count - 1), in: clips)
         case .tabToCards:
-            guard state.searchExpanded || !state.query.isEmpty else { return false }
-            if !state.tabbedToCards { state.select(nil) }
-            state.tabbedToCards.toggle()
+            state.switchSearchFocus(firstClipID: clips.first?.id)
         case .selectAll:
             state.selectAll(in: clips)
         case .paste:

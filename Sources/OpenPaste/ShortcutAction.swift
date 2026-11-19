@@ -22,7 +22,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .extendPrevious: "Добавить предыдущую карточку"
         case .extendNext: "Добавить следующую карточку"
         case .selectAll: "Выделить все карточки"
-        case .tabToCards: "Из поиска к карточкам"
+        case .tabToCards: "Переключить фокус между поиском и карточками"
         }
     }
 

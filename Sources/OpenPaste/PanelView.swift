@@ -135,6 +135,9 @@ struct PanelView: View {
                     .onChange(of: state.shownAt) { _, _ in
                         proxy.scrollTo(Self.stripStart, anchor: .leading)
                     }
+                    .onChange(of: state.tabbedToCards) { _, onCards in
+                        if onCards { proxy.scrollTo(Self.stripStart, anchor: .leading) }
+                    }
                     .onChange(of: state.board) { _, _ in
                         proxy.scrollTo(Self.stripStart, anchor: .leading)
                     }
@@ -447,7 +450,7 @@ struct PanelView: View {
     private static let pinboardDropType = UTType(
         exportedAs: "dev.openpaste.pinboard-order", conformingTo: .data)
 
-    private var searchMode: Bool { state.searchExpanded || !state.query.isEmpty }
+    private var searchMode: Bool { state.searchFieldVisible }
     private static let searchFieldWidth: CGFloat = 360
 
     /// The app has no menu bar icon, so settings and quit live here.

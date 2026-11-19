@@ -9,8 +9,9 @@ struct ShortcutGroupView: View {
         SettingsCard {
             ForEach(actions) { action in
                 if action != actions.first { Divider() }
-                SettingsShortcutRow(action: action, shortcuts: shortcuts, recorder: recorder,
-                                    detail: action == .deleteWithoutSearch ? "Когда строка поиска пуста" : nil)
+                SettingsShortcutRow(
+                    action: action, shortcuts: shortcuts, recorder: recorder,
+                    detail: action == .deleteWithoutSearch ? "Когда поиск закрыт" : nil)
             }
         }
     }
