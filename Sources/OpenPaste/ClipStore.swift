@@ -138,8 +138,7 @@ final class ClipStore {
         poll()
     }
 
-    func poll() {
-        let pb = NSPasteboard.general
+    func poll(_ pb: NSPasteboard = .general) {
         guard pb.changeCount != lastChange else { return }
         lastChange = pb.changeCount
 
@@ -161,10 +160,15 @@ final class ClipStore {
         } else if let s = pb.string(forType: .string),
             !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
-            add(Clip(kind: Self.isLink(s) ? .link : .text, text: s, appBundleID: app))
+            add(
+                Clip(
+                    kind: Self.isLink(s) ? .link : .text, text: s,
+                    // Big texts go to a sidecar file; their RTF would bloat history.json, so drop it.
+                    richText: s.utf8.count > Self.bigTextBytes ? nil : pb.data(forType: .rtf),
+                    appBundleID: app))
         } else if let raw = pb.data(forType: .png) ?? pb.data(forType: .tiff) {
             // Encoding a Retina screenshot takes tens of ms: do it off the main thread.
-            let isPNG = pb.data(forType: .png) != nil
+            let isPNG = pb.availableType(from: [.png]) != nil
             var clip = Clip(kind: .image, appBundleID: app)
             clip.imageFile = "\(clip.id).png"
             let dst = imagesDir.appendingPathComponent(clip.imageFile!)
@@ -199,8 +203,8 @@ final class ClipStore {
         // Duplicates move to the front of their board. Big texts compare only previews, so they never dedupe.
         if clip.textFile == nil, let text = clip.text,
             let i = clips.firstIndex(where: {
-                $0.textFile == nil && $0.text == text && $0.richText == clip.richText
-                    && $0.pinboardID == clip.pinboardID
+                // Same text with or without formatting is one card; the newest copy's formatting wins.
+                $0.textFile == nil && $0.text == text && $0.pinboardID == clip.pinboardID
             })
         {
             clip.title = clip.title ?? clips[i].title  // a re-copied clip keeps the name the user gave it
@@ -358,16 +362,15 @@ final class ClipStore {
     }
 
     /// Puts the clip back on the system pasteboard and moves it to the front.
-    func copy(_ clip: Clip) {
-        let pb = NSPasteboard.general
+    func copy(_ clip: Clip, to pb: NSPasteboard = .general) {
         pb.clearContents()
         if clip.kind == .file {
             pb.writeObjects(clip.files as [NSURL])
         } else if let text = fullText(clip) {
             pb.setString(text, forType: .string)
             if let richText = clip.richText { pb.setData(richText, forType: .rtf) }
-        } else if let url = imageURL(clip), let image = NSImage(contentsOf: url) {
-            pb.writeObjects([image])
+        } else if let url = imageURL(clip), let png = try? Data(contentsOf: url) {
+            pb.setData(png, forType: .png)  // original bytes; NSImage would re-encode as a much bigger TIFF
         }
         lastChange = pb.changeCount
         guard clip.pinboardID == nil else {

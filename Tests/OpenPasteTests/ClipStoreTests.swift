@@ -127,6 +127,54 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertEqual(s.clips.map(\.text), ["a", "b"])
     }
 
+    /// A private pasteboard, so tests never clobber the user's clipboard.
+    private func makePasteboard() -> NSPasteboard {
+        let pb = NSPasteboard(name: .init("openpaste-test-\(UUID())"))
+        addTeardownBlock { pb.releaseGlobally() }
+        return pb
+    }
+
+    func testRichTextIsCapturedAndRestored() throws {
+        let s = makeStore()
+        let pb = makePasteboard()
+        let rtf = try XCTUnwrap(
+            NSAttributedString(string: "bold").rtf(
+                from: NSRange(location: 0, length: 4), documentAttributes: [:]))
+        pb.clearContents()
+        pb.setString("bold", forType: .string)
+        pb.setData(rtf, forType: .rtf)
+        s.poll(pb)
+        XCTAssertEqual(s.clips.map(\.richText), [rtf])
+
+        // The same text copied again without formatting replaces the card instead of duplicating it.
+        pb.clearContents()
+        pb.setString("bold", forType: .string)
+        s.poll(pb)
+        XCTAssertEqual(s.clips.count, 1)
+        XCTAssertNil(s.clips[0].richText)
+
+        s.add(Clip(kind: .text, text: "bold", richText: rtf))
+        s.copy(s.clips[0], to: pb)
+        XCTAssertEqual(pb.data(forType: .rtf), rtf)
+    }
+
+    func testImageIsCopiedBackAsOriginalPNG() throws {
+        let s = makeStore()
+        let pb = makePasteboard()
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8,
+                samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        var clip = Clip(kind: .image)
+        clip.imageFile = "a.png"
+        try png.write(to: s.imageURL(clip)!)
+        s.add(clip)
+        s.copy(s.clips[0], to: pb)
+        XCTAssertEqual(pb.data(forType: .png), png)
+    }
+
     func testLimitAndPersistence() {
         let s = makeStore(limit: 2)
         ["1", "2", "3"].forEach { s.add(Clip(kind: .text, text: $0)) }
