@@ -54,20 +54,25 @@ struct HistorySettingsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
-                    Button { confirmClear = true } label: {
+                    Button {
+                        confirmClear = true
+                    } label: {
                         Text("Стереть историю…")
                             .padding(.horizontal, 12)
                             .padding(.vertical, 4)
-                            .background(Color(nsColor: .quaternaryLabelColor),
-                                        in: .rect(cornerRadius: 6))
+                            .background(
+                                Color(nsColor: .quaternaryLabelColor),
+                                in: .rect(cornerRadius: 6))
                     }
-                        .buttonStyle(.plain)
-                        .confirmationDialog("Стереть всю историю?", isPresented: $confirmClear) {
-                            Button("Стереть", role: .destructive, action: store.clear)
-                            Button("Отмена", role: .cancel) {}
-                        } message: {
-                            Text("Закреплённые в пинбордах карточки останутся. Это действие нельзя отменить.")
-                        }
+                    .buttonStyle(.plain)
+                    .confirmationDialog("Стереть всю историю?", isPresented: $confirmClear) {
+                        Button("Стереть", role: .destructive, action: store.clear)
+                        Button("Отмена", role: .cancel) {}
+                    } message: {
+                        Text(
+                            "Закреплённые в пинбордах карточки останутся. Это действие нельзя отменить."
+                        )
+                    }
                 }
                 .padding(.vertical, 10)
             }

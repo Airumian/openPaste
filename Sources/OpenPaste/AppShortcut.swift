@@ -7,7 +7,9 @@ struct AppShortcut: Codable, Equatable {
     let keyLabel: String
 
     static let modifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
-    static let digitKeys: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
+    static let digitKeys: [UInt16: Int] = [
+        18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9,
+    ]
     private static let specialKeys: [UInt16: String] = [
         36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc", 76: "↩", 117: "⌦",
         115: "↖", 119: "↘", 116: "⇞", 121: "⇟", 123: "←", 124: "→", 125: "↓", 126: "↑",
@@ -24,16 +26,21 @@ struct AppShortcut: Codable, Equatable {
 
     init?(event: NSEvent) {
         guard event.type == .keyDown, !event.isARepeat else { return nil }
-        let label = Self.specialKeys[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased()
+        let label =
+            Self.specialKeys[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased()
         guard let label, !label.isEmpty else { return nil }
         self.init(keyCode: event.keyCode, flags: event.modifierFlags, keyLabel: label)
     }
 
-    var flags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiers).intersection(Self.modifierMask) }
+    var flags: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: modifiers).intersection(Self.modifierMask)
+    }
     var display: String { Self.symbols(for: flags) + keyLabel }
     var hasCommandModifier: Bool { !flags.intersection([.command, .option, .control]).isEmpty }
     var isFunctionKey: Bool { Self.specialKeys[keyCode]?.hasPrefix("F") == true }
-    var isNavigationKey: Bool { [36, 48, 51, 53, 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(keyCode) }
+    var isNavigationKey: Bool {
+        [36, 48, 51, 53, 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(keyCode)
+    }
 
     var carbonModifiers: UInt32 {
         var result: UInt32 = 0

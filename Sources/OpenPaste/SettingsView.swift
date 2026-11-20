@@ -26,8 +26,10 @@ struct SettingsView: View {
                         .padding(.horizontal, 10)
                         .frame(height: 32)
                         .foregroundStyle(selection == section ? Color.white : Color.primary)
-                        .background(selection == section ? Color.blue : .clear,
-                                    in: .rect(cornerRadius: 8))
+                        .background(
+                            selection == section ? Color.blue : .clear,
+                            in: .rect(cornerRadius: 8)
+                        )
                         .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
