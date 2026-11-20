@@ -49,6 +49,12 @@ struct PanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: state.isVisible) { _, visible in
+            if !visible { commitBoardName() }
+        }
+        .onChange(of: focus) { previous, current in
+            if previous == .boardName, current != .boardName { commitBoardName() }
+        }
     }
 
     private var panelContent: some View {
@@ -150,7 +156,12 @@ struct PanelView: View {
         .onChange(of: state.shownAt) { _, _ in focus = .search }
         .onChange(of: state.searchFocusRequest) { _, _ in focus = .search }
         .onChange(of: state.tabbedToCards) { _, onCards in focus = onCards ? nil : .search }
-        .onChange(of: state.boardEditor) { _, editor in focus = editor == nil ? .search : .boardName
+        .onChange(of: state.boardEditor) { _, editor in
+            if editor != nil {
+                focus = .boardName
+            } else if focus == .boardName {
+                focus = .search
+            }
         }
     }
 
@@ -161,6 +172,7 @@ struct PanelView: View {
                 ?? selected,
             now: state.shownAt,
             thumbnail: [.image, .file].contains(clip.kind) ? store.thumbnail(clip) : nil,
+            imageSize: store.imageSize(clip),
             titleDraft: state.renamingClip == clip.id ? $clipTitleDraft : nil,
             onCommitTitle: {
                 store.rename(clip, to: clipTitleDraft)
@@ -427,7 +439,9 @@ struct PanelView: View {
     }
 
     private func startRename(_ board: Pinboard) {
+        commitBoardName()
         boardName = board.name
+        state.searchExpanded = false
         state.boardEditor = .rename(board.id)
     }
 
@@ -439,9 +453,11 @@ struct PanelView: View {
                 .font(Self.tabTitleFont)
                 .focused($focus, equals: .boardName)
                 .frame(width: 120)
+                .accessibilityLabel("Название пинборда")
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
         .liquidGlass(in: Capsule())
+        .background { CommitOnOutsideClick(action: commitBoardName) }
         .onSubmit(commitBoardName)
     }
 
@@ -482,6 +498,7 @@ struct PanelView: View {
 
     private var magnifierButton: some View {
         Button {
+            commitBoardName()
             state.searchExpanded = true
             focus = .search
         } label: {
@@ -535,7 +552,9 @@ struct PanelView: View {
     private func tab(_ id: UUID?, title: String, icon: some View, compact: Bool = false)
         -> some View
     {
-        Button {
+        let selected = state.board == id
+        return Button {
+            commitBoardName()
             onSwitchBoard(id)
         } label: {
             HStack(spacing: 7) {
@@ -546,23 +565,23 @@ struct PanelView: View {
             }
             .padding(.horizontal, compact ? 9 : 14).padding(.vertical, 8)
             .contentShape(Capsule())
-            .background(Capsule().fill(.white.opacity(state.board == id ? 0.1 : 0)))
+            .background(Capsule().fill(Color.primary.opacity(selected ? 0.10 : 0)))
             .animation(nil, value: state.board)
         }
-        .buttonStyle(HoverIconStyle(shape: AnyShape(Capsule()), showsHover: state.board != id))
+        .buttonStyle(HoverIconStyle(shape: AnyShape(Capsule()), showsHover: !selected))
         .accessibilityLabel(title)  // compact tabs show only an icon
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func commitBoardName() {
-        let name = boardName.trimmingCharacters(in: .whitespaces)
-        let editor = state.boardEditor
+        guard let editor = state.boardEditor else { return }
+        let name = boardName.trimmingCharacters(in: .whitespacesAndNewlines)
         withAnimation(tabAnimation) {
             state.boardEditor = nil
             guard !name.isEmpty else { return }
             switch editor {
             case .new: onSwitchBoard(store.addPinboard(name: name).id)
             case .rename(let id): store.renamePinboard(id, to: name)
-            case nil: break
             }
         }
     }
@@ -582,11 +601,13 @@ private struct CardRemoval: Transition {
 
 struct CardView: View {
     @Environment(\.cardIsRemoving) private var isRemoving
+    @Environment(\.self) private var environment
     let clip: Clip
     let index: Int
     let selected: Bool
     let now: Date
     let thumbnail: NSImage?
+    var imageSize: CGSize? = nil
     /// Non-nil while this card's title is being edited inline.
     var titleDraft: Binding<String>? = nil
     var onCommitTitle: () -> Void = {}
@@ -601,14 +622,22 @@ struct CardView: View {
 
     var body: some View {
         let app = AppStyle.style(for: clip.appBundleID)
+        let swatch = clipboardColor
         VStack(alignment: .leading, spacing: 0) {
             header(app)
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            footerBar
+            VStack(alignment: .leading, spacing: 0) {
+                if let swatch {
+                    ColorCardPreview(value: clip.text ?? "", usesDarkText: swatch.usesDarkText, index: index)
+                } else {
+                    content(ink: .primary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    if clip.kind != .image { footerBar(ink: nil) }
+                }
+            }
+            .background(swatch.map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) } ?? .clear)
         }
         .frame(width: 232, height: 232)
-        .background(clip.kind == .link ? Color(white: 0.13) : Color(white: 0.08))
+        .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay {
             if selected && !isRemoving {
@@ -618,7 +647,13 @@ struct CardView: View {
                     .transition(.identity)
             }
         }
-        .environment(\.colorScheme, .dark)
+    }
+
+    private var clipboardColor: ClipboardColor? {
+        guard clip.kind == .text, let color = ClipboardColor.parse(clip.text ?? "") else { return nil }
+        let surface = Color(nsColor: .textBackgroundColor).resolve(in: environment)
+        return color.composited(over: ClipboardColor(
+            red: Double(surface.red), green: Double(surface.green), blue: Double(surface.blue)))
     }
 
     /// App-colored strip; the icon is oversized and pushed into the corner so the card's rounding crops it.
@@ -656,13 +691,10 @@ struct CardView: View {
         .clipped()
     }
 
-    @ViewBuilder private var content: some View {
+    @ViewBuilder private func content(ink: Color) -> some View {
         switch clip.kind {
         case .image:
-            if let image = thumbnail {
-                Image(nsImage: image).resizable().scaledToFill()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-            }
+            ImageCardPreview(image: thumbnail, pixelSize: imageSize, index: index)
         case .file:
             if let image = thumbnail {
                 Image(nsImage: image).resizable().scaledToFit()
@@ -679,7 +711,7 @@ struct CardView: View {
             GeometryReader { area in
                 Text(String((clip.text ?? "").prefix(600)))
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12).padding(.top, 10)
                     .frame(width: area.size.width, height: area.size.height, alignment: .topLeading)
@@ -696,14 +728,14 @@ struct CardView: View {
         }
     }
 
-    private var footerBar: some View {
+    private func footerBar(ink: Color?) -> some View {
         let centered = ![.link, .file].contains(clip.kind)
         let badge = HStack(spacing: 6) {
             Image(systemName: "text.alignleft").font(.system(size: 10))
             Text("\(index)").monospacedDigit()
         }
         .padding(.horizontal, 5).padding(.vertical, 2)
-        .background(.white.opacity(0.08), in: .rect(cornerRadius: 5))
+        .background((ink ?? Color.primary).opacity(0.08), in: .rect(cornerRadius: 5))
         return HStack(spacing: 6) {
             // Invisible twin of the badge, so centered text is centered on the card, not beside the badge.
             if centered { badge.hidden() }
@@ -713,13 +745,13 @@ struct CardView: View {
             badge
         }
         .font(.system(size: 12))
-        .foregroundStyle(.white.opacity(0.72))
+        .foregroundStyle(ink ?? .secondary)
         .padding(.horizontal, 12).padding(.bottom, 9)
     }
 
     static func defaultTitle(_ clip: Clip) -> String {
         switch clip.kind {
-        case .text: "Текст"
+        case .text: ClipboardColor.parse(clip.text ?? "") == nil ? "Текст" : "Цвет"
         case .link: "Ссылка"
         case .image: "Изображение"
         case .file: clip.files.count > 1 ? "Файлы · \(clip.files.count)" : "Файл"

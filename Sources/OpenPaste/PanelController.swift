@@ -221,6 +221,12 @@ final class PanelController {
 
     /// Assigned panel commands are handled before the search field; other keys go to search.
     private func handle(_ e: NSEvent) -> Bool {
+        // A shortcut inside the SwiftUI pop-up menu isn't reliably registered until it opens.
+        // Handle the standard settings command here, including while an inline editor has focus.
+        if !shortcuts.isRecording, AppShortcut.openSettings.matches(e) {
+            onSettings()
+            return true
+        }
         if state.boardEditor != nil || state.renamingClip != nil {  // a name field owns the keyboard
             if e.keyCode == 53 {
                 state.boardEditor = nil

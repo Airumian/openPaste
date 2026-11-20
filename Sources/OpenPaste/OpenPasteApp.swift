@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Own window instead of the SwiftUI Settings scene: openSettings is unreliable in menu-bar-only apps.
     func showSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(
+            let window = SettingsWindow(
                 contentViewController: NSHostingController(
                     rootView: SettingsView(store: store, shortcuts: shortcuts)))
             window.title = "Настройки OpenPaste"
