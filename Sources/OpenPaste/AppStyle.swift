@@ -19,9 +19,9 @@ enum AppStyle {
     }
 
     /// Saturation-weighted average of the icon's colorful pixels; nil for monochrome icons.
-    /// Brightness is capped so white header text stays readable.
+    /// Keep the icon's brightness, with a gentle saturation boost and a soft ceiling for header text.
     static func dominantColor(of image: NSImage) -> NSColor? {
-        let size = 32
+        let size = 64
         guard
             let rep = NSBitmapImageRep(
                 bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
@@ -39,7 +39,7 @@ enum AppStyle {
         var total = 0.0
         for x in 0..<size {
             for y in 0..<size {
-                guard let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.5,
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5,
                     c.saturationComponent > 0.3, c.brightnessComponent > 0.2
                 else { continue }
                 let w = c.saturationComponent
@@ -51,10 +51,10 @@ enum AppStyle {
         }
         // Ignore icons where color is just a few stray pixels.
         guard total > Double(size * size) * 0.03 else { return nil }
-        let avg = NSColor(red: r / total, green: g / total, blue: b / total, alpha: 1)
+        let avg = NSColor(srgbRed: r / total, green: g / total, blue: b / total, alpha: 1)
         return NSColor(
-            hue: avg.hueComponent, saturation: min(avg.saturationComponent * 1.1, 1),
-            brightness: min(avg.brightnessComponent, 0.78), alpha: 1)
+            hue: avg.hueComponent, saturation: min(avg.saturationComponent * 1.05, 0.98),
+            brightness: min(avg.brightnessComponent, 0.87), alpha: 1)
     }
 }
 

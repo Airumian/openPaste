@@ -7,6 +7,7 @@ struct AppShortcut: Codable, Equatable {
     let keyLabel: String
 
     static let modifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+    static let openSettings = AppShortcut(keyCode: 43, flags: .command, keyLabel: ",")
     static let digitKeys: [UInt16: Int] = [
         18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9,
     ]

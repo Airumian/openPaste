@@ -199,6 +199,8 @@ final class ClipStoreTests: XCTestCase {
         let thumb = try XCTUnwrap(s.thumbnail(clip))
         let px = thumb.representations.map { max($0.pixelsWide, $0.pixelsHigh) }.max() ?? 0
         XCTAssertLessThanOrEqual(px, ClipStore.thumbnailPixels)
+        XCTAssertEqual(s.imageSize(clip), CGSize(width: 3000, height: 2000))
+        XCTAssertEqual(reload(s).imageSize(clip), CGSize(width: 3000, height: 2000))
 
         let thumbFile = ClipStore.thumbnailURL(for: s.imageURL(clip)!)
         XCTAssertTrue(FileManager.default.fileExists(atPath: thumbFile.path))
@@ -316,5 +318,19 @@ final class FormatTests: XCTestCase {
             return true
         }
         XCTAssertNil(AppStyle.dominantColor(of: gray), "monochrome icons fall back to gray")
+    }
+
+    func testBrightAppColorsRetainBrightnessWithoutClippingSaturation() throws {
+        let icon = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            NSColor(srgbRed: 5.0 / 255, green: 161.0 / 255, blue: 221.0 / 255, alpha: 1).setFill()
+            rect.fill()
+            return true
+        }
+        let color = try XCTUnwrap(AppStyle.dominantColor(of: icon)?.usingColorSpace(.sRGB))
+        XCTAssertGreaterThan(color.brightnessComponent, 0.85)
+        XCTAssertLessThan(color.saturationComponent, 1)
+        XCTAssertEqual(color.redComponent, 5.0 / 255, accuracy: 0.02)
+        XCTAssertEqual(color.greenComponent, 161.0 / 255, accuracy: 0.02)
+        XCTAssertEqual(color.blueComponent, 221.0 / 255, accuracy: 0.02)
     }
 }

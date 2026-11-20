@@ -50,6 +50,11 @@ final class ClipStore {
         cache.countLimit = 100  // visible cards plus scroll headroom
         return cache
     }()
+    @ObservationIgnored private let imageSizeCache: NSCache<NSString, NSValue> = {
+        let cache = NSCache<NSString, NSValue>()
+        cache.countLimit = 100
+        return cache
+    }()
     @ObservationIgnored private var saveScheduled = false
     @ObservationIgnored private var needsSave = false
     @ObservationIgnored private var saveRevision = 0
@@ -462,6 +467,22 @@ final class ClipStore {
         guard let image = NSImage(contentsOf: dst) else { return nil }
         thumbCache.setObject(image, forKey: key)
         return image
+    }
+
+    /// Read original pixel dimensions without decoding the full image or using its reduced thumbnail.
+    func imageSize(_ clip: Clip) -> CGSize? {
+        guard clip.kind == .image, let url = imageURL(clip) else { return nil }
+        let key = url.lastPathComponent as NSString
+        if let cached = imageSizeCache.object(forKey: key) { return cached.sizeValue }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int,
+            width > 0, height > 0
+        else { return nil }
+        let size = CGSize(width: width, height: height)
+        imageSizeCache.setObject(NSValue(size: size), forKey: key)
+        return size
     }
 
     static func makeThumbnail(_ url: URL) -> CGImage? {
