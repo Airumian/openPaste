@@ -1,3 +1,4 @@
+import SQLite3
 import XCTest
 
 @testable import OpenPaste
@@ -19,6 +20,7 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertEqual(reload(s).fullText(clip), big)
         s.delete(clip)
         s.clear()
+        s.flush(wait: true)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: s.textsDir.path), [])
     }
 
@@ -36,7 +38,7 @@ final class ClipStoreTests: XCTestCase {
 
     func testFailedSaveCanBeRetriedWithoutAnotherChange() throws {
         let store = makeStore()
-        let path = store.dir.appendingPathComponent("history.json")
+        let path = store.dir.appendingPathComponent("history.sqlite3")
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
         store.add(Clip(kind: .text, text: "keep this"))
         store.flush(wait: true)
@@ -47,6 +49,91 @@ final class ClipStoreTests: XCTestCase {
         store.flush(wait: true)
         XCTAssertNil(store.persistenceError)
         XCTAssertEqual(reload(store).clips.first?.text, "keep this")
+    }
+
+    func testImportsJSONHistoryAndPinboardsOnce() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let texts = dir.appendingPathComponent("texts")
+        try FileManager.default.createDirectory(at: texts, withIntermediateDirectories: true)
+        let boards = [Pinboard(name: "Работа", color: 4), Pinboard(name: "Дом", color: 1)]
+        var pinned = Clip(kind: .text, text: "preview", pinboardID: boards[0].id, title: "Title")
+        pinned.textFile = "saved.txt"
+        pinned.textLength = 12
+        let clips = [Clip(kind: .text, text: "a\0б", richText: Data()), pinned]
+        let sidecar = texts.appendingPathComponent("saved.txt")
+        try Data("full content".utf8).write(to: sidecar)
+        let legacy = dir.appendingPathComponent("history.json")
+        try JSONEncoder().encode(clips).write(to: legacy)
+        try JSONEncoder().encode(boards).write(to: dir.appendingPathComponent("pinboards.json"))
+
+        let store = ClipStore(dir: dir)
+        XCTAssertNil(store.persistenceError)
+        XCTAssertEqual(store.clips, clips)
+        XCTAssertEqual(store.pinboards, boards)
+        XCTAssertEqual(store.fullText(pinned), "full content")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: dir.appendingPathComponent("pinboards.json").path))
+        XCTAssertEqual(ClipStore(dir: dir).clips, clips)
+
+        store.delete(clips[0])
+        store.flush(wait: true)
+        try JSONEncoder().encode(clips).write(to: legacy)
+        let reopened = ClipStore(dir: dir)
+        XCTAssertEqual(reopened.clips, [pinned])
+        XCTAssertEqual(reopened.pinboards, boards)
+        XCTAssertEqual(reopened.fullText(pinned), "full content")
+    }
+
+    func testInvalidLegacyJSONIsKeptWhenImportFails() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let history = dir.appendingPathComponent("history.json")
+        let boards = dir.appendingPathComponent("pinboards.json")
+        let originalHistory = try JSONEncoder().encode([Clip(kind: .text, text: "keep me")])
+        let invalidBoards = Data("{".utf8)
+        try originalHistory.write(to: history)
+        try invalidBoards.write(to: boards)
+
+        let store = ClipStore(dir: dir)
+        store.add(Clip(kind: .text, text: "new item"))
+        store.flush(wait: true)
+        XCTAssertNotNil(store.persistenceError)
+        XCTAssertEqual(try Data(contentsOf: history), originalHistory)
+        XCTAssertEqual(try Data(contentsOf: boards), invalidBoards)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: dir.appendingPathComponent("history.sqlite3").path))
+    }
+
+    func testFailedSaveKeepsPreviouslyPersistedExternalText() throws {
+        let store = makeStore()
+        let oldText = String(repeating: "old\n", count: 15_000)
+        let newText = String(repeating: "new\n", count: 15_000)
+        store.add(Clip(kind: .text, text: oldText))
+        let old = try XCTUnwrap(reload(store).clips.first)
+        let oldFile = store.textsDir.appendingPathComponent(try XCTUnwrap(old.textFile))
+
+        var connection: OpaquePointer?
+        let path = store.dir.appendingPathComponent("history.sqlite3").path
+        XCTAssertEqual(sqlite3_open(path, &connection), SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        XCTAssertEqual(sqlite3_exec(connection, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK)
+        try store.editContents(of: old.id, text: newText, richText: nil)
+        store.flush(wait: true)
+        XCTAssertNotNil(store.persistenceError)
+        let reopened = ClipStore(dir: store.dir)
+        XCTAssertEqual(reopened.clips, [old])
+        XCTAssertEqual(reopened.fullText(old), oldText)
+
+        XCTAssertEqual(sqlite3_exec(connection, "ROLLBACK", nil, nil, nil), SQLITE_OK)
+        let saved = reload(store)
+        XCTAssertNil(store.persistenceError)
+        XCTAssertEqual(saved.clips.first.flatMap(saved.fullText), newText)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
     }
 
     func testEditingKeepsCardIdentityAndPersistsFullText() throws {
@@ -87,6 +174,7 @@ final class ClipStoreTests: XCTestCase {
         second.imageFile = "b.png"
         second.imageHash = "same"
         s.add(second)
+        s.flush(wait: true)
         XCTAssertEqual(s.clips.map(\.imageFile), ["b.png"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: s.imageURL(first)!.path))
     }
@@ -255,6 +343,7 @@ final class ClipStoreTests: XCTestCase {
         s.delete(clip)
         XCTAssertTrue(FileManager.default.fileExists(atPath: thumbFile.path), "kept for ⌘Z")
         s.clear()
+        s.flush(wait: true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: thumbFile.path))
     }
 

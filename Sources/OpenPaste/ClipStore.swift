@@ -58,6 +58,10 @@ final class ClipStore {
     @ObservationIgnored private var saveScheduled = false
     @ObservationIgnored private var needsSave = false
     @ObservationIgnored private var saveRevision = 0
+    @ObservationIgnored private var changedClips: Set<UUID> = []
+    @ObservationIgnored private var pendingFileRemovals: [Clip] = []
+    @ObservationIgnored private var storageReady = false
+    private let database: ClipDatabase
     /// Disk writes and image encoding, off the main thread. Serial, so saves land in order.
     private static let io = DispatchQueue(label: "openpaste.io", qos: .utility)
     static let thumbnailPixels = 480  // card is 232 pt wide, 2x on Retina
@@ -66,8 +70,6 @@ final class ClipStore {
 
     var imagesDir: URL { dir.appendingPathComponent("images") }
     var textsDir: URL { dir.appendingPathComponent("texts") }
-    private var historyFile: URL { dir.appendingPathComponent("history.json") }
-    private var pinboardsFile: URL { dir.appendingPathComponent("pinboards.json") }
 
     init(
         dir: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[
@@ -78,17 +80,20 @@ final class ClipStore {
     ) {
         self.dir = dir
         self.limit = limit
+        database = ClipDatabase(dir: dir)
         try? FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: textsDir, withIntermediateDirectories: true)
-        if let data = try? Data(contentsOf: historyFile),
-            let saved = try? JSONDecoder().decode([Clip].self, from: data)
-        {
-            clips = saved
-        }
-        if let data = try? Data(contentsOf: pinboardsFile),
-            let saved = try? JSONDecoder().decode([Pinboard].self, from: data)
-        {
-            pinboards = saved
+        do {
+            let loaded = try database.load()
+            clips = loaded.clips
+            pinboards = loaded.pinboards
+            storageReady = true
+            if loaded.needsImport {
+                needsSave = true
+                flush(wait: true)
+            }
+        } catch {
+            persistenceError = error.localizedDescription
         }
     }
 
@@ -163,7 +168,7 @@ final class ClipStore {
             add(
                 Clip(
                     kind: Self.isLink(s) ? .link : .text, text: s,
-                    // Big texts go to a sidecar file; their RTF would bloat history.json, so drop it.
+                    // Big texts go to a sidecar file; their RTF would bloat history, so drop it.
                     richText: s.utf8.count > Self.bigTextBytes ? nil : pb.data(forType: .rtf),
                     appBundleID: app))
         } else if let raw = pb.data(forType: .png) ?? pb.data(forType: .tiff) {
@@ -188,7 +193,7 @@ final class ClipStore {
     func add(_ clip: Clip) {
         var clip = clip
         if clip.textFile == nil, let text = clip.text, text.utf8.count > Self.bigTextBytes {
-            // Keep multi-MB logs out of memory and history.json; search and cards only need the start.
+            // Keep multi-MB logs out of memory; search and cards only need the start.
             let file = "\(clip.id).txt"
             do {
                 try text.write(
@@ -197,7 +202,7 @@ final class ClipStore {
                 clip.textLength = text.count
                 clip.text = String(text.prefix(Self.previewChars))
             } catch {
-                // Preserve the complete text in history.json if the sidecar cannot be written.
+                // Preserve the complete text in history if the sidecar cannot be written.
             }
         }
         // Duplicates move to the front of their board. Big texts compare only previews, so they never dedupe.
@@ -216,14 +221,15 @@ final class ClipStore {
             })
         {
             clip.title = clip.title ?? clips[i].title
-            removeFile(of: clips.remove(at: i))
+            scheduleFileRemoval(of: clips.remove(at: i))
         }
         clips.insert(clip, at: 0)
+        changedClips.insert(clip.id)
         // Limit applies to history only; pinned clips are kept forever.
         while clips.filter({ $0.pinboardID == nil }).count > limit,
             let last = clips.lastIndex(where: { $0.pinboardID == nil })
         {
-            removeFile(of: clips.remove(at: last))
+            scheduleFileRemoval(of: clips.remove(at: last))
         }
         save()
     }
@@ -241,7 +247,7 @@ final class ClipStore {
             ids.contains(clip.id) ? (clip: clip, index: index) : nil
         }
         guard !removed.isEmpty else { return }
-        trash.forEach { removeFile(of: $0.clip) }
+        trash.forEach { scheduleFileRemoval(of: $0.clip) }
         trash = removed
         clips.removeAll { ids.contains($0.id) }
         save()
@@ -258,6 +264,7 @@ final class ClipStore {
                 clip.pinboardID = nil  // its pinboard was deleted meanwhile: restore into history
             }
             clips.insert(clip, at: min(index, clips.count))
+            changedClips.insert(clip.id)
             if first == nil { first = clip }
         }
         trash.removeAll()
@@ -286,16 +293,16 @@ final class ClipStore {
         let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
         let expired = clips.filter { $0.pinboardID == nil && $0.date < cutoff }
         guard !expired.isEmpty else { return }
-        expired.forEach(removeFile)
+        expired.forEach(scheduleFileRemoval)
         clips.removeAll { $0.pinboardID == nil && $0.date < cutoff }
         save()
     }
 
     /// Clears history; pinboards stay.
     func clear() {
-        clips.filter { $0.pinboardID == nil }.forEach(removeFile)
+        clips.filter { $0.pinboardID == nil }.forEach(scheduleFileRemoval)
         clips.removeAll { $0.pinboardID == nil }
-        trash.forEach { removeFile(of: $0.clip) }
+        trash.forEach { scheduleFileRemoval(of: $0.clip) }
         trash.removeAll()
         save()
     }
@@ -331,7 +338,7 @@ final class ClipStore {
     }
 
     func deletePinboard(_ board: Pinboard) {
-        clips.filter { $0.pinboardID == board.id }.forEach(removeFile)
+        clips.filter { $0.pinboardID == board.id }.forEach(scheduleFileRemoval)
         clips.removeAll { $0.pinboardID == board.id }
         pinboards.removeAll { $0.id == board.id }
         save()
@@ -404,9 +411,11 @@ final class ClipStore {
         clip.kind = Self.isLink(text) ? .link : .text
         clip.richText = richText
         if clip.textFile != nil || text.utf8.count > Self.bigTextBytes {
-            let file = clip.textFile ?? "\(clip.id).txt"
+            // The on-disk record still points to the old contents until the database commits.
+            let file = "\(UUID()).txt"
             try text.write(
                 to: textsDir.appendingPathComponent(file), atomically: true, encoding: .utf8)
+            scheduleFileRemoval(of: clip)
             clip.textFile = file
             clip.textLength = text.count
             clip.text = String(text.prefix(Self.previewChars))
@@ -414,6 +423,7 @@ final class ClipStore {
             clip.text = text
         }
         clips[index] = clip
+        changedClips.insert(id)
         save()
     }
 
@@ -422,6 +432,7 @@ final class ClipStore {
         guard let i = clips.firstIndex(where: { $0.id == clip.id }) else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         clips[i].title = trimmed.isEmpty ? nil : trimmed
+        changedClips.insert(clip.id)
         save()
     }
 
@@ -502,17 +513,29 @@ final class ClipStore {
         image.deletingPathExtension().appendingPathExtension("thumb.png")
     }
 
-    private func removeFile(of clip: Clip) {
-        if let file = clip.textFile {
-            try? FileManager.default.removeItem(at: textsDir.appendingPathComponent(file))
-        }
-        guard let url = imageURL(clip) else { return }
-        try? FileManager.default.removeItem(at: url)
-        try? FileManager.default.removeItem(at: Self.thumbnailURL(for: url))
-        thumbCache.removeObject(forKey: url.lastPathComponent as NSString)
+    private func scheduleFileRemoval(of clip: Clip) {
+        if clip.textFile != nil || clip.imageFile != nil { pendingFileRemovals.append(clip) }
     }
 
-    // shortcut: whole history rewritten as JSON on every change, fine for ~500 items; move to SQLite/GRDB if the limit grows.
+    private func removeUnreferencedFiles() {
+        guard !pendingFileRemovals.isEmpty else { return }
+        let retained = clips + trash.map(\.clip)
+        let texts = Set(retained.compactMap(\.textFile))
+        let images = Set(retained.compactMap(\.imageFile))
+        for clip in pendingFileRemovals {
+            if let file = clip.textFile, !texts.contains(file) {
+                try? FileManager.default.removeItem(at: textsDir.appendingPathComponent(file))
+            }
+            if let file = clip.imageFile, !images.contains(file) {
+                let url = imagesDir.appendingPathComponent(file)
+                try? FileManager.default.removeItem(at: url)
+                try? FileManager.default.removeItem(at: Self.thumbnailURL(for: url))
+                thumbCache.removeObject(forKey: file as NSString)
+            }
+        }
+        pendingFileRemovals.removeAll()
+    }
+
     /// Coalesces bursts of changes into one background write ~0.5 s later.
     private func save() {
         needsSave = true
@@ -525,15 +548,11 @@ final class ClipStore {
     /// Failed writes keep the current snapshot pending for retry.
     func flush(wait: Bool = false) {
         saveScheduled = false
-        guard needsSave else { return }
+        guard needsSave, storageReady else { return }
         saveRevision += 1
         let revision = saveRevision
-        let (clips, pinboards, history, boards) = (clips, pinboards, historyFile, pinboardsFile)
-        let write = {
-            Result {
-                try JSONEncoder().encode(clips).write(to: history, options: .atomic)
-                try JSONEncoder().encode(pinboards).write(to: boards, options: .atomic)
-            }
+        let write = { [database, clips, pinboards, changedClips] in
+            Result { try database.save(clips: clips, pinboards: pinboards, changed: changedClips) }
         }
         if wait {
             finishSave(Self.io.sync(execute: write), revision: revision)
@@ -550,6 +569,8 @@ final class ClipStore {
         switch result {
         case .success:
             needsSave = false
+            changedClips.removeAll()
+            removeUnreferencedFiles()
             persistenceError = nil
         case .failure(let error):
             needsSave = true

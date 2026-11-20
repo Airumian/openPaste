@@ -3,70 +3,82 @@ import XCTest
 
 @testable import OpenPaste
 
-/// Stress numbers for a big history. Run: OPENPASTE_BENCH=1 swift test -c release --filter Benchmark
+/// OPENPASTE_BENCH=1 swift test -c release --filter Benchmark
 final class Benchmark: XCTestCase {
-    func testBigHistory() throws {
+    func testHistoryStorage() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["OPENPASTE_BENCH"] != nil)
+        for count in [500, 5_000] {
+            try measureHistory(count: count)
+        }
+    }
+
+    private func measureHistory(count: Int) throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bench-\(UUID())")
-        let line =
-            "2026-11-19 10:13:23.298 | ERROR | app.worker:process_job:42 - Request failed\n"
-        let log = String(repeating: line, count: 52_000)  // ~5 MB
-
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = String(repeating: "worker: Request failed\n", count: 220_000)
+        let formatting = Data(("{\\rtf1 " + String(repeating: "x", count: 2_000) + "}").utf8)
         do {
-            let s = ClipStore(dir: dir)
-            for i in 0..<495 {
-                s.add(Clip(kind: .text, text: "item \(i) " + String(repeating: "x", count: 200)))
+            let store = ClipStore(dir: dir, limit: count)
+            for i in 0..<(count - 5) {
+                store.add(
+                    Clip(
+                        kind: .text, text: "item \(i) " + String(repeating: "x", count: 200),
+                        richText: i.isMultiple(of: 10) ? formatting : nil))
             }
-            for i in 0..<5 { s.add(Clip(kind: .text, text: "log \(i)\n" + log)) }
-            let t = time(20) { s.add(Clip(kind: .text, text: "copy \(UUID())")) }
-            s.flush(wait: true)
-            report("copy (main thread)", ms: t)
+            for i in 0..<5 {
+                store.add(Clip(kind: .text, text: "log \(i)\n" + log))
+            }
+            store.flush(wait: true)
+            XCTAssertNil(store.persistenceError)
+
+            report(
+                count, "rename+flush",
+                ms: median(31) { i in
+                    store.rename(store.clips[0], to: "title \(i)")
+                    store.flush(wait: true)
+                })
+            report(
+                count, "insert+flush",
+                ms: median(31) { i in
+                    store.add(Clip(kind: .text, text: "copy \(i)"))
+                    store.flush(wait: true)
+                })
+            XCTAssertNil(store.persistenceError)
         }
 
-        let before = footprintMB()
-        var loaded: ClipStore!
-        report("load history", ms: time(1) { loaded = ClipStore(dir: dir) })
-        report("memory of loaded history", mb: footprintMB() - before)
-        report("search miss (500 clips)", ms: time(20) { _ = loaded.filtered("no-such-thing") })
-        let json = try FileManager.default.attributesOfItem(
-            atPath: dir.appendingPathComponent("history.json").path)
-        report("history.json", mb: Double(json[.size] as! Int) / 1_048_576)
-
-        let shot = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: 3024, pixelsHigh: 1964, bitsPerSample: 8,
-            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-            bytesPerRow: 0, bitsPerPixel: 0)!
-        let tiff = shot.tiffRepresentation!
         report(
-            "screenshot TIFF→PNG",
-            ms: time(3) {
-                _ = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+            count, "load",
+            ms: median(11) { _ in
+                let store = ClipStore(dir: dir, limit: count)
+                XCTAssertEqual(store.clips.count, count)
             })
-        _ = loaded
-    }
+        let loaded = ClipStore(dir: dir, limit: count)
+        XCTAssertEqual(loaded.clips.first?.text, "copy 30")
+        report(
+            count, "search miss",
+            ms: median(31) { _ in
+                XCTAssertTrue(loaded.filtered("no-such-thing").isEmpty)
+            })
 
-    private func time(_ n: Int, _ body: () -> Void) -> Double {
-        let start = DispatchTime.now().uptimeNanoseconds
-        for _ in 0..<n { body() }
-        return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 / Double(n)
-    }
-
-    private func report(_ name: String, ms: Double) {
-        print("BENCH \(name): \(String(format: "%.1f", ms)) ms")
-    }
-    private func report(_ name: String, mb: Double) {
-        print("BENCH \(name): \(String(format: "%.1f", mb)) MB")
-    }
-
-    private func footprintMB() -> Double {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        _ = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
+        let bytes = try FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ).reduce(0) { total, file in
+            let values = try file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            return total + (values.isRegularFile == true ? values.fileSize ?? 0 : 0)
         }
-        return Double(info.phys_footprint) / 1_048_576
+        print("BENCH \(count) storage: \(bytes) bytes")
+    }
+
+    private func median(_ count: Int, _ body: (Int) -> Void) -> Double {
+        let samples = (0..<count).map { i in
+            let start = DispatchTime.now().uptimeNanoseconds
+            body(i)
+            return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        }.sorted()
+        return samples[count / 2]
+    }
+
+    private func report(_ count: Int, _ name: String, ms: Double) {
+        print("BENCH \(count) \(name): \(String(format: "%.3f", ms)) ms")
     }
 }
