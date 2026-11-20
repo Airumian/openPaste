@@ -26,7 +26,8 @@ struct CommitOnOutsideClick: NSViewRepresentable {
             super.viewDidMoveToWindow()
             stopMonitoring()
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown])
+            {
                 [weak self] event in
                 guard let self, let window = self.window, event.window === window,
                     !self.isHiddenOrHasHiddenAncestor,

@@ -11,14 +11,17 @@ struct ImageCardPreview: View {
             ZStack {
                 Canvas { context, size in
                     let tile: CGFloat = 8
-                    context.fill(Path(CGRect(origin: .zero, size: size)),
-                                 with: .color(Color(nsColor: .textBackgroundColor)))
+                    context.fill(
+                        Path(CGRect(origin: .zero, size: size)),
+                        with: .color(Color(nsColor: .textBackgroundColor)))
                     var squares = Path()
                     for row in 0..<Int(ceil(size.height / tile)) {
-                        for column in 0..<Int(ceil(size.width / tile)) where (row + column).isMultiple(of: 2) {
-                            squares.addRect(CGRect(
-                                x: CGFloat(column) * tile, y: CGFloat(row) * tile,
-                                width: tile, height: tile))
+                        for column in 0..<Int(ceil(size.width / tile))
+                        where (row + column).isMultiple(of: 2) {
+                            squares.addRect(
+                                CGRect(
+                                    x: CGFloat(column) * tile, y: CGFloat(row) * tile,
+                                    width: tile, height: tile))
                         }
                     }
                     context.fill(squares, with: .color(Color.primary.opacity(0.06)))

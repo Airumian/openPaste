@@ -39,7 +39,8 @@ enum AppStyle {
         var total = 0.0
         for x in 0..<size {
             for y in 0..<size {
-                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5,
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                    c.alphaComponent > 0.5,
                     c.saturationComponent > 0.3, c.brightnessComponent > 0.2
                 else { continue }
                 let w = c.saturationComponent

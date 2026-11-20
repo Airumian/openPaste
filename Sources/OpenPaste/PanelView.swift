@@ -627,14 +627,16 @@ struct CardView: View {
             header(app)
             VStack(alignment: .leading, spacing: 0) {
                 if let swatch {
-                    ColorCardPreview(value: clip.text ?? "", usesDarkText: swatch.usesDarkText, index: index)
+                    ColorCardPreview(
+                        value: clip.text ?? "", usesDarkText: swatch.usesDarkText, index: index)
                 } else {
                     content(ink: .primary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if clip.kind != .image { footerBar(ink: nil) }
                 }
             }
-            .background(swatch.map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) } ?? .clear)
+            .background(
+                swatch.map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) } ?? .clear)
         }
         .frame(width: 232, height: 232)
         .background(Color(nsColor: .textBackgroundColor))
@@ -650,10 +652,13 @@ struct CardView: View {
     }
 
     private var clipboardColor: ClipboardColor? {
-        guard clip.kind == .text, let color = ClipboardColor.parse(clip.text ?? "") else { return nil }
+        guard clip.kind == .text, let color = ClipboardColor.parse(clip.text ?? "") else {
+            return nil
+        }
         let surface = Color(nsColor: .textBackgroundColor).resolve(in: environment)
-        return color.composited(over: ClipboardColor(
-            red: Double(surface.red), green: Double(surface.green), blue: Double(surface.blue)))
+        return color.composited(
+            over: ClipboardColor(
+                red: Double(surface.red), green: Double(surface.green), blue: Double(surface.blue)))
     }
 
     /// App-colored strip; the icon is oversized and pushed into the corner so the card's rounding crops it.

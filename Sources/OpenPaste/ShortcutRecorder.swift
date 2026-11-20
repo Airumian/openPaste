@@ -20,12 +20,16 @@ final class ShortcutRecorder {
         self.action = action
         shortcuts.errorMessage = nil
         shortcuts.setRecording(true)
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [
+            .keyDown, .leftMouseDown, .rightMouseDown,
+        ]) { [weak self] event in
             guard let self else { return event }
             return self.handle(event)
         }
-        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
-                                                                object: window, queue: .main) { [weak self] _ in
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: window, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated { self?.stop() }
         }
     }

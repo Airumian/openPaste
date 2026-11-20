@@ -9,7 +9,8 @@ struct SettingsCard<Content: View>: View {
         }
         .padding(.horizontal, SettingsLayout.cardInset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35),
-                    in: .rect(cornerRadius: 12))
+        .background(
+            Color(nsColor: .quaternaryLabelColor).opacity(0.35),
+            in: .rect(cornerRadius: 12))
     }
 }
