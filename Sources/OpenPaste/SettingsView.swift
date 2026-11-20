@@ -56,7 +56,10 @@ struct SettingsView: View {
                     Group {
                         switch selection {
                         case .general:
-                            HistorySettingsView(store: store)
+                            VStack(alignment: .leading, spacing: 16) {
+                                LoginItemSettingsView()
+                                HistorySettingsView(store: store)
+                            }
                         case .shortcuts:
                             KeyboardShortcutsView(shortcuts: shortcuts)
                         }

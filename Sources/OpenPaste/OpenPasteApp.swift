@@ -57,7 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.center()
             settingsWindow = window
         }
-        NSApp.activate()  // menu bar apps are inactive; without this the window opens behind others
+        panel.hide()
+        NSApp.activate()
+        settingsWindow?.deminiaturize(nil)
+        // Activation can complete after the menu action returns.
+        settingsWindow?.orderFrontRegardless()
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
