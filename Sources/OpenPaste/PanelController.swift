@@ -77,6 +77,31 @@ final class PanelState {
 
 final class PastePanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .scrollWheel,
+            !event.hasPreciseScrollingDeltas,
+            event.scrollingDeltaX == 0,
+            event.scrollingDeltaY != 0,
+            let view = contentView,
+            let hit = view.hitTest(
+                view.superview?.convert(event.locationInWindow, from: nil)
+                    ?? event.locationInWindow),
+            let scrollView = (hit as? NSScrollView) ?? hit.enclosingScrollView,
+            let document = scrollView.documentView,
+            document.frame.width > scrollView.contentView.bounds.width,
+            document.frame.height <= scrollView.contentView.bounds.height
+        {
+            let clipView = scrollView.contentView
+            var bounds = clipView.bounds
+            // A detented wheel reports lines, while the clip view scrolls in points.
+            bounds.origin.x -= event.scrollingDeltaY * scrollView.horizontalLineScroll
+            clipView.scroll(to: clipView.constrainBoundsRect(bounds).origin)
+            scrollView.reflectScrolledClipView(clipView)
+            return
+        }
+        super.sendEvent(event)
+    }
 }
 
 /// Bottom-of-screen panel. Non-activating, so the app you were typing in stays frontmost and receives ⌘V.

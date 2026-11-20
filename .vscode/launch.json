@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:openPaste}",
+      "name": "Debug OpenPaste",
+      "target": "OpenPaste",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug OpenPaste"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:openPaste}",
+      "name": "Release OpenPaste",
+      "target": "OpenPaste",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release OpenPaste"
+    }
+  ]
+}

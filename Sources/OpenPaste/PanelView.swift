@@ -125,7 +125,7 @@ struct PanelView: View {
                         .padding(.horizontal, 24)
                         .id(Self.stripStart)  // scrolling to the whole strip keeps its leading padding
                     }
-                    .scrollIndicators(.hidden)
+                    .scrollIndicators(.never)
                     .onChange(of: state.cursor) { _, id in
                         guard let id, clips.contains(where: { $0.id == id }) else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
