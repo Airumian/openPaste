@@ -134,7 +134,7 @@ final class PanelController {
         let host = NSHostingView(
             rootView: PanelView(
                 store: store, shortcuts: shortcuts, state: state,
-                onPaste: { [unowned self] in paste($0) },
+                onPaste: { [unowned self] in paste([$0]) },
                 onDelete: { [unowned self] in delete($0) },
                 onEdit: { [unowned self] in edit($0) },
                 onSwitchBoard: { [unowned self] in switchBoard(to: $0) },
@@ -262,7 +262,8 @@ final class PanelController {
         case .selectAll:
             state.selectAll(in: clips)
         case .paste:
-            if let index { paste(clips[index]) }
+            let ids = state.selectedIDs(in: clips)
+            paste(clips.filter { ids.contains($0.id) })
         case .edit:
             if let index { edit(clips[index]) }
         case .close where !state.query.isEmpty || state.searchExpanded:
@@ -335,8 +336,8 @@ final class PanelController {
         }
     }
 
-    private func paste(_ clip: Clip) {
-        store.copy(clip)
+    private func paste(_ clips: [Clip]) {
+        guard store.copy(clips) else { return }
         hide()
         // Without Accessibility the synthetic ⌘V is silently dropped; ask instead of failing invisibly.
         // The clip is already on the clipboard, so a manual ⌘V still works meanwhile.

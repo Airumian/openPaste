@@ -370,24 +370,70 @@ final class ClipStore {
 
     /// Puts the clip back on the system pasteboard and moves it to the front.
     func copy(_ clip: Clip, to pb: NSPasteboard = .general) {
+        copy([clip], to: pb)
+    }
+
+    @discardableResult
+    func copy(_ selection: [Clip], to pb: NSPasteboard = .general) -> Bool {
+        guard !selection.isEmpty else { return false }
+        let groups = selection.map { clip -> [any NSPasteboardWriting] in
+            if clip.kind == .file { return clip.files.map { $0 as NSURL } }
+            let item = NSPasteboardItem()
+            if let text = fullText(clip) {
+                item.setString(text, forType: .string)
+                if let richText = clip.richText { item.setData(richText, forType: .rtf) }
+            } else if let url = imageURL(clip), let png = try? Data(contentsOf: url) {
+                item.setData(png, forType: .png)  // preserve original bytes
+            }
+            return item.types.isEmpty ? [] : [item]
+        }
+        guard groups.allSatisfy({ !$0.isEmpty }) else { return false }
+        var objects = groups.flatMap { $0 }
+        if let items = objects as? [NSPasteboardItem], items.count > 1 {
+            let strings = items.compactMap { $0.string(forType: .string) }
+            if strings.count == items.count {
+                objects = [combinedTextItem(items, strings: strings)]
+            }
+        }
         pb.clearContents()
-        if clip.kind == .file {
-            pb.writeObjects(clip.files as [NSURL])
-        } else if let text = fullText(clip) {
-            pb.setString(text, forType: .string)
-            if let richText = clip.richText { pb.setData(richText, forType: .rtf) }
-        } else if let url = imageURL(clip), let png = try? Data(contentsOf: url) {
-            pb.setData(png, forType: .png)  // original bytes; NSImage would re-encode as a much bigger TIFF
-        }
+        let written = pb.writeObjects(objects)
         lastChange = pb.changeCount
-        guard clip.pinboardID == nil else {
-            add(duplicate(clip, into: nil))  // pasting a pin also records it in history; the pin stays put
-            return
+        guard written else { return false }
+        for clip in selection.reversed() {
+            if clip.pinboardID != nil {
+                add(duplicate(clip, into: nil))  // record the paste in history and keep the pin
+            } else {
+                var moved = clip
+                moved.date = Date()
+                clips.removeAll { $0.id == clip.id }
+                add(moved)
+            }
         }
-        var moved = clip
-        moved.date = Date()
-        clips.removeAll { $0.id == clip.id }
-        add(moved)
+        return true
+    }
+
+    private func combinedTextItem(_ items: [NSPasteboardItem], strings: [String])
+        -> NSPasteboardItem
+    {
+        let result = NSPasteboardItem()
+        result.setString(strings.joined(separator: "\n"), forType: .string)
+        let richTexts = items.map { $0.data(forType: .rtf) }
+        if richTexts.contains(where: { $0 != nil }) {
+            let combined = NSMutableAttributedString(string: "")
+            for (index, text) in strings.enumerated() {
+                if index > 0 { combined.append(NSAttributedString(string: "\n")) }
+                let formatted = richTexts[index].flatMap {
+                    NSAttributedString(rtf: $0, documentAttributes: nil)
+                }
+                combined.append(formatted ?? NSAttributedString(string: text))
+            }
+            if let rtf = combined.rtf(
+                from: NSRange(location: 0, length: combined.length), documentAttributes: [:])
+            {
+                result.setData(rtf, forType: .rtf)
+            }
+        }
+        return result
     }
 
     /// Whole text for pasting and dragging; `clip.text` may be just a preview.

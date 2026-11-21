@@ -222,6 +222,55 @@ final class ClipStoreTests: XCTestCase {
         return pb
     }
 
+    func testCopySelectedTextClipsTogetherInPanelOrder() throws {
+        let store = makeStore()
+        let pb = makePasteboard()
+        let text = "formatted"
+        let rtf = try XCTUnwrap(
+            NSAttributedString(string: text).rtf(
+                from: NSRange(location: 0, length: text.count), documentAttributes: [:]))
+        let longText = String(repeating: "line of text\n", count: 5_000)
+        store.add(Clip(kind: .text, text: "outside the selection"))
+        store.add(Clip(kind: .text, text: longText))
+        store.add(Clip(kind: .text, text: text, richText: rtf))
+        let clips = store.filtered("")
+        let state = PanelState()
+        state.select(clips[1].id)
+        state.extendSelection(to: 0, in: clips)
+        let selected = state.selectedIDs(in: clips)
+
+        store.copy(clips.filter { selected.contains($0.id) }, to: pb)
+
+        let expected = text + "\n" + longText
+        XCTAssertEqual(pb.pasteboardItems?.count, 1)
+        XCTAssertEqual(pb.string(forType: .string), expected)
+        let combinedRTF = try XCTUnwrap(pb.data(forType: .rtf))
+        XCTAssertEqual(
+            NSAttributedString(rtf: combinedRTF, documentAttributes: nil)?.string, expected)
+        XCTAssertEqual(store.filtered("").map(\.id), clips.map(\.id))
+    }
+
+    func testCopySelectedClipsWithFilesPreservesSeparateItems() {
+        let store = makeStore()
+        let pb = makePasteboard()
+        let file = store.dir.appendingPathComponent("file.txt")
+        let clips = [
+            Clip(kind: .text, text: "text"),
+            Clip(kind: .file, text: file.path),
+        ]
+
+        store.copy(clips, to: pb)
+
+        XCTAssertEqual(pb.pasteboardItems?.count, 2)
+        XCTAssertEqual(pb.pasteboardItems?.first?.string(forType: .string), "text")
+        XCTAssertEqual(
+            pb.readObjects(
+                forClasses: [NSURL.self],
+                options: [
+                    .urlReadingFileURLsOnly: true
+                ]) as? [URL], [file])
+    }
+
     func testRichTextIsCapturedAndRestored() throws {
         let s = makeStore()
         let pb = makePasteboard()
